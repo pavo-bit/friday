@@ -1,0 +1,140 @@
+const express = require('express');
+const cors = require('cors');
+const { execFile } = require('child_process');
+const path = require('path');
+const fs = require('fs');
+
+// ---------------------------------------------------------------------------
+// Environment Configuration
+// ---------------------------------------------------------------------------
+// Load .env file if present (keeps API keys out of shell profile)
+const envPath = path.join(__dirname, '.env');
+if (fs.existsSync(envPath)) {
+    const envContent = fs.readFileSync(envPath, 'utf-8');
+    for (const line of envContent.split('\n')) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIndex = trimmed.indexOf('=');
+        if (eqIndex > 0) {
+            const key = trimmed.slice(0, eqIndex).trim();
+            const value = trimmed.slice(eqIndex + 1).trim().replace(/^["']|["']$/g, '');
+            if (!process.env[key]) process.env[key] = value;
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Express App Setup
+// ---------------------------------------------------------------------------
+const app = express();
+app.use(cors());
+app.use(express.json({ limit: '1mb' }));       // Guard against payload abuse
+app.use(express.static(__dirname));
+
+const CLAW_EXE = path.join(__dirname, '..', 'rust', 'target', 'debug', 'claw.exe');
+const MAX_PROMPT_LENGTH = 32_000;               // Reject absurdly large prompts
+const EXECUTION_TIMEOUT_MS = 120_000;           // 2 minute hard limit per request
+
+// ---------------------------------------------------------------------------
+// ANSI escape code stripper
+// ---------------------------------------------------------------------------
+function stripAnsi(text) {
+    return text.replace(
+        // eslint-disable-next-line no-control-regex
+        /[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g,
+        ''
+    );
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/chat  — Main AI endpoint (SECURITY-HARDENED)
+// ---------------------------------------------------------------------------
+// CRITICAL FIX: Uses execFile() instead of exec().
+// execFile() passes arguments as an array directly to the executable,
+// completely bypassing the shell. This makes command injection impossible
+// regardless of what the user puts in the prompt field.
+// ---------------------------------------------------------------------------
+app.post('/api/chat', (req, res) => {
+    const prompt = req.body.prompt;
+    if (!prompt || typeof prompt !== 'string') {
+        return res.status(400).json({ error: 'No prompt provided' });
+    }
+    if (prompt.length > MAX_PROMPT_LENGTH) {
+        return res.status(413).json({ error: 'Prompt exceeds maximum length' });
+    }
+
+    const env = { ...process.env, HOME: process.env.USERPROFILE };
+
+    // execFile passes ["prompt", <user_input>] directly to the binary.
+    // No shell interpretation occurs — the prompt is a raw argv string.
+    execFile(
+        CLAW_EXE,
+        ['prompt', prompt],
+        { env, timeout: EXECUTION_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
+        (error, stdout, stderr) => {
+            let output = stdout || '';
+            if (stderr) output += '\n' + stderr;
+            if (error && !output) output = error.message;
+
+            output = stripAnsi(output);
+
+            if (output.includes('missing Anthropic credentials')) {
+                output =
+                    "I'm sorry, but I can't reach the AI network right now! " +
+                    'It seems my API Key is missing. Please create a .env file ' +
+                    'in the web-ui/ folder with ANTHROPIC_API_KEY=sk-... or restart ' +
+                    'the server in a terminal where the key is set. 😊';
+            }
+
+            res.json({ output: output.trim() });
+        }
+    );
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/health  — Quick healthcheck for monitoring
+// ---------------------------------------------------------------------------
+app.get('/api/health', (_req, res) => {
+    const clawExists = fs.existsSync(CLAW_EXE);
+    res.json({
+        status: clawExists ? 'ok' : 'degraded',
+        claw_binary: clawExists,
+        uptime_seconds: Math.floor(process.uptime()),
+    });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/sessions  — Observability endpoint (Phase 4 stub)
+// ---------------------------------------------------------------------------
+app.get('/api/sessions', (_req, res) => {
+    // Future: read session JSONL files from the .claw directory
+    // and return structured traces for the dashboard.
+    const sessionsDir = path.join(__dirname, '..', '.claw', 'sessions');
+    if (!fs.existsSync(sessionsDir)) {
+        return res.json({ sessions: [], message: 'No sessions directory found' });
+    }
+    try {
+        const files = fs.readdirSync(sessionsDir)
+            .filter(f => f.endsWith('.jsonl') || f.endsWith('.json'))
+            .map(f => ({
+                id: path.basename(f, path.extname(f)),
+                file: f,
+                size_bytes: fs.statSync(path.join(sessionsDir, f)).size,
+                modified: fs.statSync(path.join(sessionsDir, f)).mtime,
+            }))
+            .sort((a, b) => new Date(b.modified) - new Date(a.modified));
+        res.json({ sessions: files });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ---------------------------------------------------------------------------
+// Start Server
+// ---------------------------------------------------------------------------
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`🚀 Claw UI running on http://localhost:${PORT}`);
+    console.log(`   Binary: ${CLAW_EXE}`);
+    console.log(`   Binary exists: ${fs.existsSync(CLAW_EXE)}`);
+});

@@ -1,0 +1,91 @@
+// ============================================================
+// FRIDAY — API Routes: /friday/memory/*
+// Memory management endpoints
+// ============================================================
+
+import { Router, Request, Response } from 'express';
+import { getMemoryStore } from '../../memory/store';
+
+export const memoryRoutes = Router();
+
+/**
+ * POST /friday/memory/store
+ * Store a new memory entry.
+ */
+memoryRoutes.post('/store', async (req: Request, res: Response) => {
+  const { type, key, value, metadata } = req.body as {
+    type?: string;
+    key?: string;
+    value?: string;
+    metadata?: Record<string, string>;
+  };
+
+  if (!type || !key || !value) {
+    res.status(400).json({ error: 'Missing required fields: type, key, value' });
+    return;
+  }
+
+  const validTypes = ['conversation', 'task', 'preference', 'contact', 'fact'];
+  if (!validTypes.includes(type)) {
+    res.status(400).json({ error: `Invalid type. Must be one of: ${validTypes.join(', ')}` });
+    return;
+  }
+
+  const store = await getMemoryStore();
+  const id = store.store(type as any, key, value, metadata || {});
+  res.json({ id, stored: true });
+});
+
+/**
+ * GET /friday/memory/search?q=<query>
+ * Search memories using keyword matching.
+ */
+memoryRoutes.get('/search', async (req: Request, res: Response) => {
+  const query = req.query.q as string;
+  const limit = parseInt((req.query.limit as string) || '10', 10);
+
+  if (!query) {
+    res.status(400).json({ error: 'Missing query parameter "q"' });
+    return;
+  }
+
+  const store = await getMemoryStore();
+  const results = store.search(query, limit);
+  res.json({ results, count: results.length });
+});
+
+/**
+ * GET /friday/memory/retrieve?type=<type>&key=<pattern>
+ * Retrieve memories by type and/or key pattern.
+ */
+memoryRoutes.get('/retrieve', async (req: Request, res: Response) => {
+  const type = req.query.type as string | undefined;
+  const keyPattern = req.query.key as string | undefined;
+  const limit = parseInt((req.query.limit as string) || '20', 10);
+
+  const store = await getMemoryStore();
+  const results = store.retrieve(type as any, keyPattern, limit);
+  res.json({ results, count: results.length });
+});
+
+/**
+ * GET /friday/memory/conversations
+ * Get recent conversation history.
+ */
+memoryRoutes.get('/conversations', async (req: Request, res: Response) => {
+  const limit = parseInt((req.query.limit as string) || '50', 10);
+  const sessionId = req.query.session as string | undefined;
+
+  const store = await getMemoryStore();
+  const conversations = store.getRecentConversations(limit, sessionId);
+  res.json({ conversations, count: conversations.length });
+});
+
+/**
+ * GET /friday/memory/stats
+ * Get memory store statistics.
+ */
+memoryRoutes.get('/stats', async (_req: Request, res: Response) => {
+  const store = await getMemoryStore();
+  res.json(store.getStats());
+});

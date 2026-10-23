@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claw Chat</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="chat-app">
+        <!-- Header -->
+        <header class="chat-header">
+            <div class="profile-section">
+                <div class="avatar-container">
+                    <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Claw" alt="Claw Agent" class="avatar">
+                    <span class="online-dot"></span>
+                </div>
+                <div class="header-info">
+                    <h2>Claw Assistant</h2>
+                    <span class="status">Active now</span>
+                </div>
+            </div>
+            <div class="header-actions">
+                <button class="icon-btn">⋮</button>
+            </div>
+        </header>
+
+        <!-- Chat Area -->
+        <main class="chat-window" id="chatContainer">
+            <div class="timestamp">Today 9:41 AM</div>
+            
+            <div class="messages" id="messagesArea">
+                <div class="message-row agent">
+                    <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Claw" alt="Agent" class="message-avatar">
+                    <div class="bubble agent-bubble">
+                        Hey there! 👋 I'm Claw, your AI coding assistant. How can I help you today?
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Input Area -->
+        <footer class="chat-footer">
+            <form id="chatForm">
+                <div class="input-container">
+                    <button type="button" class="attach-btn">+</button>
+                    <input type="text" id="userInput" placeholder="Message..." autocomplete="off" required>
+                    <button type="submit" id="sendBtn" class="send-btn">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
+                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
+                        </svg>
+                    </button>
+                </div>
+            </form>
+        </footer>
+    </div>
+    <script src="script.js"></script>
+</body>
+</html>

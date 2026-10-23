@@ -1,0 +1,40 @@
+{
+  "name": "friday",
+  "version": "1.0.0",
+  "description": "FRIDAY — Fully Responsive Intelligent Digital Assistant System",
+  "main": "dist/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node src/index.ts",
+    "start": "node dist/index.js",
+    "ui": "node -e \"require('child_process').exec('start http://localhost:3141')\"",
+    "test": "echo \"Tests pending\" && exit 0"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.10.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "express": "^5.0.1",
+    "imapflow": "^1.5.0",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
+    "nodemailer": "^9.0.3",
+    "uuid": "^11.1.0",
+    "winston": "^3.17.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/multer": "^1.4.12",
+    "@types/node": "^22.13.0",
+    "@types/node-fetch": "^2.6.12",
+    "@types/nodemailer": "^8.0.1",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.13",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.7.3"
+  }
+}
