@@ -35,20 +35,54 @@ export class AssistantBrain {
 
     store.logConversation('user', trimmed, undefined, sessionId);
 
-    // 1. Greetings & Farewells (natural, context-aware, never fabricating state)
-    if (/^(hi|hello|hey|good\s*(morning|afternoon|evening)|yo|greetings)\b/i.test(trimmed) && trimmed.length < 45) {
+    // 1. Greetings, Compound Greeting+Command requests & Farewells
+    const greetingPrefixMatch = trimmed.match(
+      /^(?:(?:hi|hello|hey|good\s*(?:morning|afternoon|evening|night)|yo|greetings)(?:\s*,?\s*friday)?[!.,\s]*)(.*)$/i
+    );
+    if (greetingPrefixMatch) {
+      const remainder = (greetingPrefixMatch[1] || '').trim();
       const watchers = await getMonitoringEngine().listWatchers();
-      const unhealthy = watchers.filter((w) => w.status === 'active' && (w.health === 'offline' || w.health === 'degraded')).length;
+      const unhealthy = watchers.filter(
+        (w) => w.status === 'active' && (w.health === 'offline' || w.health === 'degraded')
+      ).length;
       const pendingReminders = (await getSchedulerService().listReminders('pending')).length;
       const ollama = await getOllamaClient().checkStatus(1_000);
 
-      const output = personality.buildGreeting(profile, {
+      const greetingText = personality.buildGreeting(profile, {
         pendingRemindersCount: pendingReminders,
         unhealthyWatchersCount: unhealthy,
         allSystemsHealthy: unhealthy === 0 && ollama.reachable,
       });
 
-      return this.finish(intentId, trimmed, output, true, 'internal', RiskLevel.LOW, startTime, sessionId);
+      // Pure greeting -> return greeting directly
+      if (!remainder || remainder.length < 3) {
+        return this.finish(intentId, trimmed, greetingText, true, 'internal', RiskLevel.LOW, startTime, sessionId);
+      }
+
+      // Compound request ("Good morning FRIDAY, what is my system status?")
+      const compoundTool = this.matchDirectTool(remainder, profile.timezone);
+      if (compoundTool) {
+        const toolRes = await registry.execute(compoundTool.tool, compoundTool.args, {
+          actor: 'user',
+          approvedHighRisk,
+          timezone: profile.timezone,
+        });
+        const actionText = toolRes.success
+          ? personality.formatVerifiedSuccess(toolRes.message, toolRes.verified)
+          : personality.formatFailure(toolRes.error || toolRes.message);
+        const combined = `${greetingText}\n\n${actionText}`;
+        const res = await this.finish(
+          intentId,
+          trimmed,
+          combined,
+          toolRes.success,
+          'internal',
+          RiskLevel.LOW,
+          startTime,
+          sessionId
+        );
+        return { ...res, toolResult: toolRes };
+      }
     }
 
     if (/^(bye|goodbye|see\s*you|good\s*night)\b/i.test(trimmed) && trimmed.length < 40) {

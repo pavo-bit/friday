@@ -23,20 +23,27 @@ export interface GreetingContext {
 }
 
 export const DEFAULT_PERSONALITY_PROFILE: PersonalityProfile = {
-  userName: 'User',
+  userName: 'Boss',
   formality: 'balanced',
   humor: 'subtle',
   verbosity: 'concise',
-  timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+  timezone: 'Asia/Kolkata',
 };
+
+export type TimePeriodGreeting =
+  | 'Good morning'
+  | 'Good afternoon'
+  | 'Good evening'
+  | 'Good night';
 
 export class PersonalityEngine {
   private lastGreetingAt = 0;
+  private lastGreetingText = '';
 
   /**
-   * Determine time-of-day salutation using the user's configured timezone.
+   * Determine time-of-day salutation using the system clock and configured timezone.
    */
-  getTimeOfDay(now: Date = new Date(), timezone = 'UTC'): 'Good morning' | 'Good afternoon' | 'Good evening' {
+  getTimeOfDay(now: Date = new Date(), timezone = 'Asia/Kolkata'): TimePeriodGreeting {
     let hour = now.getHours();
     try {
       const formatted = new Intl.DateTimeFormat('en-US', {
@@ -52,11 +59,13 @@ export class PersonalityEngine {
 
     if (hour >= 5 && hour < 12) return 'Good morning';
     if (hour >= 12 && hour < 17) return 'Good afternoon';
-    return 'Good evening';
+    if (hour >= 17 && hour < 21) return 'Good evening';
+    return 'Good night';
   }
 
   /**
-   * Build a context-aware greeting without overusing greetings or fabricating status.
+   * Build a context-aware greeting addressing the user as Boss,
+   * avoiding identical consecutive greeting responses.
    */
   buildGreeting(profile: PersonalityProfile, ctx: GreetingContext, explicitGreeting = true): string {
     const nowMs = (ctx.now || new Date()).getTime();
@@ -64,25 +73,40 @@ export class PersonalityEngine {
     this.lastGreetingAt = nowMs;
 
     const salutation = this.getTimeOfDay(ctx.now, profile.timezone);
-    const namePart = profile.userName && profile.userName !== 'User' ? `, ${profile.userName}` : '';
+    const name = profile.userName?.trim() || 'Boss';
 
     if (!explicitGreeting && recentlyGreeted) {
-      return 'Ready when you are.';
+      return `Ready when you are, ${name}.`;
     }
 
-    const parts: string[] = [];
+    const candidatesByPeriod: Record<TimePeriodGreeting, string[]> = {
+      'Good morning': [
+        `Good morning, ${name}! Hope you slept well.`,
+        `Good morning, ${name}. Ready to get started today?`,
+        `Morning, ${name}. Systems are online and standing by.`,
+      ],
+      'Good afternoon': [
+        `Good afternoon, ${name}. What are we working on today?`,
+        `Good afternoon, ${name}. Ready whenever you are.`,
+        `Afternoon, ${name}. How can I assist?`,
+      ],
+      'Good evening': [
+        `Good evening, ${name}. I'm ready.`,
+        `Good evening, ${name}. Welcome back.`,
+        `Evening, ${name}. What's on the agenda?`,
+      ],
+      'Good night': [
+        `Good night, ${name}. Have a peaceful rest.`,
+        `Good night, ${name}. I'll keep watch on any active systems.`,
+        `Working late, ${name}? Good night — let me know if you need anything before you rest.`,
+      ],
+    };
 
-    if (salutation === 'Good morning') {
-      parts.push(
-        profile.formality === 'formal'
-          ? `${salutation}${namePart}. I hope you slept well.`
-          : `${salutation}${namePart}. Hope you slept well.`
-      );
-    } else if (salutation === 'Good evening') {
-      parts.push(`${salutation}${namePart}. Welcome back.`);
-    } else {
-      parts.push(`${salutation}${namePart}.`);
-    }
+    const options = candidatesByPeriod[salutation].filter((c) => c !== this.lastGreetingText);
+    const opener = options[Math.floor(Math.random() * options.length)] || candidatesByPeriod[salutation][0];
+    this.lastGreetingText = opener;
+
+    const parts: string[] = [opener];
 
     if (ctx.unhealthyWatchersCount > 0) {
       parts.push(
@@ -90,8 +114,8 @@ export class PersonalityEngine {
           ctx.unhealthyWatchersCount === 1 ? 'service is' : 'services are'
         } currently degraded or offline.`
       );
-    } else if (ctx.allSystemsHealthy) {
-      parts.push('Your systems are healthy today.');
+    } else if (ctx.allSystemsHealthy && salutation !== 'Good night') {
+      parts.push('Your systems are healthy.');
     }
 
     if (ctx.pendingRemindersCount > 0) {

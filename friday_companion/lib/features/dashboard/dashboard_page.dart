@@ -15,6 +15,15 @@ class DashboardPage extends ConsumerWidget {
     final messages = ref.watch(cachedMessagesProvider);
     final activities = ref.watch(activityHistoryProvider);
 
+    final hour = DateTime.now().hour;
+    final greeting = hour >= 5 && hour < 12
+        ? 'Good morning, Boss.'
+        : hour >= 12 && hour < 17
+            ? 'Good afternoon, Boss.'
+            : hour >= 17 && hour < 21
+                ? 'Good evening, Boss.'
+                : 'Good night, Boss.';
+
     final statusColor = switch (conn.status) {
       ConnectionStatus.connected => FridayTheme.success,
       ConnectionStatus.connecting ||
@@ -47,6 +56,13 @@ class DashboardPage extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 12),
+            child: Text(
+              greeting,
+              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+            ),
+          ),
           // Explicit Connection State Card
           Card(
             child: Padding(

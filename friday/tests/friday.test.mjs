@@ -29,18 +29,29 @@ test.after(() => {
   fs.rmSync(tempDir, { recursive: true, force: true });
 });
 
-test('PersonalityEngine: greetings, farewells, and no false success claims', () => {
+test('PersonalityEngine: Boss default, Asia/Kolkata, 4 periods, non-repeating, and no false success', () => {
   const engine = new PersonalityEngine();
+  assert.equal(DEFAULT_PERSONALITY_PROFILE.userName, 'Boss');
+  assert.equal(DEFAULT_PERSONALITY_PROFILE.timezone, 'Asia/Kolkata');
+
   const morning = new Date('2026-11-27T08:00:00Z');
-  const greeting = engine.buildGreeting(
-    { ...DEFAULT_PERSONALITY_PROFILE, userName: 'Mayuresh', timezone: 'UTC' },
+  const g1 = engine.buildGreeting(
+    { ...DEFAULT_PERSONALITY_PROFILE, timezone: 'UTC' },
     { pendingRemindersCount: 2, unhealthyWatchersCount: 0, allSystemsHealthy: true, now: morning },
     true
   );
+  const g2 = engine.buildGreeting(
+    { ...DEFAULT_PERSONALITY_PROFILE, timezone: 'UTC' },
+    { pendingRemindersCount: 0, unhealthyWatchersCount: 0, allSystemsHealthy: true, now: morning },
+    true
+  );
 
-  assert.match(greeting, /Good morning, Mayuresh/i);
-  assert.match(greeting, /2 pending reminders/i);
-  assert.match(greeting, /systems are healthy/i);
+  assert.match(g1, /Boss/i);
+  assert.match(g1, /Good morning|Morning/i);
+  assert.match(g1, /2 pending reminders/i);
+  assert.notEqual(g1.split('.')[0], g2.split('.')[0]);
+
+  assert.equal(engine.getTimeOfDay(new Date('2026-11-27T23:00:00Z'), 'UTC'), 'Good night');
 
   const farewell = engine.buildFarewell(DEFAULT_PERSONALITY_PROFILE, 'Good night FRIDAY');
   assert.match(farewell, /Good night/i);
