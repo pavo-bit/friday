@@ -6716,7 +6716,7 @@ mod tests {
     #[test]
     fn context_window_preflight_errors_render_recovery_steps() {
         let error = ApiError::ContextWindowExceeded {
-            model: "claude-sonnet-4-6".to_string(),
+            model: "qwen3:4b".to_string(),
             estimated_input_tokens: 182_000,
             requested_output_tokens: 64_000,
             estimated_total_tokens: 246_000,
@@ -6731,7 +6731,7 @@ mod tests {
             "{rendered}"
         );
         assert!(
-            rendered.contains("Model            claude-sonnet-4-6"),
+            rendered.contains("Model            qwen3:4b"),
             "{rendered}"
         );
         assert!(
@@ -8530,7 +8530,7 @@ UU conflicted.rs",
             MessageResponse {
                 id: "msg-1".to_string(),
                 kind: "message".to_string(),
-                model: "claude-opus-4-6".to_string(),
+                model: "qwen3:4b".to_string(),
                 role: "assistant".to_string(),
                 content: vec![OutputContentBlock::ToolUse {
                     id: "tool-1".to_string(),
@@ -8565,7 +8565,7 @@ UU conflicted.rs",
             MessageResponse {
                 id: "msg-2".to_string(),
                 kind: "message".to_string(),
-                model: "claude-opus-4-6".to_string(),
+                model: "qwen3:4b".to_string(),
                 role: "assistant".to_string(),
                 content: vec![OutputContentBlock::ToolUse {
                     id: "tool-2".to_string(),
@@ -8600,7 +8600,7 @@ UU conflicted.rs",
             MessageResponse {
                 id: "msg-3".to_string(),
                 kind: "message".to_string(),
-                model: "claude-opus-4-6".to_string(),
+                model: "qwen3:4b".to_string(),
                 role: "assistant".to_string(),
                 content: vec![
                     OutputContentBlock::Thinking {

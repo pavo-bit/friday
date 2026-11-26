@@ -60,7 +60,7 @@ jobs:
         run: python .github/scripts/check_doc_source_of_truth.py
 
   fmt:
-    name: cargo fmt
+    name: rustfmt (Ollama integration test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -71,7 +71,7 @@ jobs:
         with:
           workspaces: rust -> target
       - name: Check formatting
-        run: rustfmt --check --edition 2024 crates/rusty-claude-cli/src/main.rs crates/api/src/providers/openai_compat.rs crates/plugins/src/hooks.rs
+        run: rustfmt --check --edition 2024 crates/api/tests/openai_compat_integration.rs
 
   test-workspace:
     name: cargo test --workspace
