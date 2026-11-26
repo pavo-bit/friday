@@ -19,7 +19,7 @@ FRIDAY is built with a layered architecture:
 4. **Control Layer** - System-level operations (browser, apps, PC automation)
 5. **Communication Layer** - Email (SMTP/IMAP), WhatsApp, translation, and thread summarization
 6. **Memory Layer** - Persistent SQLite storage for conversations, tasks, and preferences
-7. **Voice Layer** - Speech-to-text (Whisper) and text-to-speech integration
+7. **Voice Layer** - Browser microphone transcription and browser speech synthesis
 
 ## Authentication
 
@@ -173,8 +173,9 @@ Process voice input, transcribe it, execute the task, and return both text and a
 - `500 Internal Server Error` - Voice processing failed
 
 **Requirements:**
-- Speech-to-text: Set `STT_ENGINE=whisper_api` and `OPENAI_API_KEY` in `.env`
-- Text-to-speech: Set `TTS_ENGINE=openai` or `TTS_ENGINE=edge` in `.env`
+- Dashboard voice input uses the browser Web Speech API (Chrome/Edge support varies and recognition may use an online browser service).
+- Spoken replies use the browser SpeechSynthesis API and installed system voices.
+- Neither dashboard voice feature requires a paid API key. The server-side `/friday/voice` audio-upload route remains disabled unless a local STT engine is implemented.
 
 ---
 

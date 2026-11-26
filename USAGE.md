@@ -88,11 +88,7 @@ Supported permission modes:
 - `workspace-write`
 - `danger-full-access`
 
-Model aliases currently supported by the CLI:
-
-- `opus` → `claude-opus-4-6`
-- `sonnet` → `claude-sonnet-4-6`
-- `haiku` → `claude-haiku-4-5-20251213`
+FRIDAY defaults to `qwen3:4b`. Set `OLLAMA_MODEL` or pass `--model` to select another locally installed model.
 
 ## Authentication
 
@@ -143,7 +139,7 @@ Runtime config is loaded in this order, with later entries overriding earlier on
 
 ## Mock parity harness
 
-The workspace includes a deterministic Anthropic-compatible mock service and parity harness.
+The upstream workspace includes a deterministic legacy provider mock service and parity harness; it is not required by FRIDAY's Ollama runtime.
 
 ```bash
 cd rust

@@ -29,18 +29,18 @@ claw-code/
 
 ### What is Claw Code?
 
-Claw Code is a high-performance Rust implementation of a CLI agent harness that enables AI assistants (primarily Claude) to interact with code, execute commands, and perform development tasks autonomously.
+Claw Code is a high-performance Rust implementation of a CLI agent harness that enables local Ollama models to interact with code, execute commands, and perform development tasks autonomously.
 
 ### Key Features
 
-- **AI Agent Runtime**: Execute AI-powered coding tasks through Claude API
+- **AI Agent Runtime**: Execute AI-powered coding tasks through a local Ollama model
 - **Tool System**: 40+ built-in tools for file operations, shell commands, git, web search, etc.
 - **Interactive REPL**: Rich interactive shell with tab completion and streaming responses
 - **Session Management**: Persistent conversation history with resume capability
 - **Permission System**: Granular control over tool access (read-only, workspace-write, full-access)
 - **MCP Support**: Model Context Protocol for extensible tool integrations
 - **Plugin System**: Extensible architecture for custom functionality
-- **OAuth Authentication**: Built-in login flow alongside API key support
+- **Local inference**: Ollama at 127.0.0.1:11434; no paid model API key required for FRIDAY's default runtime
 
 ### Core Components (Rust Crates)
 
@@ -138,8 +138,8 @@ FRIDAY is a comprehensive AI assistant system that provides a natural language i
    - Context-aware responses
 
 2. **Voice Capabilities**
-   - Speech-to-text (Whisper API/Local)
-   - Text-to-speech (OpenAI/Edge)
+   - Browser microphone transcription (Web Speech API; browser support and network behavior vary)
+   - Browser speech synthesis (OS/browser voices)
    - Wake word support
 
 3. **Memory System**
@@ -222,7 +222,7 @@ npm install
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env and set ANTHROPIC_API_KEY
+# Set OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b
 
 # 3. Build Claw (if not already built)
 cd ../rust
@@ -263,7 +263,7 @@ Task Router (routes to executor)
 │ Execute Claw CLI                    │
 │ ../rust/target/debug/claw prompt    │
 │    ↓                                │
-│ Claw processes with Claude AI       │
+│ Claw processes with the local Ollama model       │
 │    ↓                                │
 │ Return result to FRIDAY             │
 └─────────────────────────────────────┘
@@ -303,7 +303,7 @@ ClawBridge.invoke({
 // 4. Executes command
 execFile('../rust/target/debug/claw', ['prompt', 'Read the file at README.md...'])
 
-// 5. Claw executes with Claude AI
+// 5. Claw executes with the local Ollama model
 // Uses read_file tool, returns content
 
 // 6. FRIDAY returns result
@@ -331,7 +331,7 @@ Located in multiple places (priority order):
 **Key settings:**
 ```json
 {
-  "model": "claude-opus-4-6",
+  "model": "qwen3:4b",
   "permissionMode": "danger-full-access",
   "allowedTools": ["*"],
   "mcpServers": {},
@@ -345,7 +345,8 @@ Located in `friday/.env`:
 
 ```bash
 # Required
-ANTHROPIC_API_KEY=sk-ant-...
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+OLLAMA_MODEL=qwen3:4b
 
 # Server
 FRIDAY_PORT=3141
@@ -355,9 +356,8 @@ FRIDAY_HOST=127.0.0.1
 CLAW_BINARY_PATH=/path/to/rust/target/debug/claw
 
 # Voice (optional)
-STT_ENGINE=whisper_api
-TTS_ENGINE=openai
-OPENAI_API_KEY=sk-...
+STT_ENGINE=none
+TTS_ENGINE=none
 
 # Safety
 RATE_LIMIT_PER_MINUTE=30

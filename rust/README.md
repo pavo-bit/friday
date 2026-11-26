@@ -15,7 +15,7 @@ cargo run -p rusty-claude-cli -- --help
 cargo build --workspace
 
 # Run the interactive REPL
-cargo run -p rusty-claude-cli -- --model claude-opus-4-6
+OLLAMA_MODEL=qwen3:4b cargo run -p rusty-claude-cli -- --model qwen3:4b
 
 # One-shot prompt
 cargo run -p rusty-claude-cli -- prompt "explain this codebase"
@@ -26,19 +26,16 @@ cargo run -p rusty-claude-cli -- --output-format json prompt "summarize src/main
 
 ## Configuration
 
-Set your API credentials:
+FRIDAY uses Ollama locally without a paid API key:
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-# Or use a proxy
-export ANTHROPIC_BASE_URL="https://your-proxy.com"
+```powershell
+ollama pull qwen3:4b
+$env:OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+$env:OLLAMA_MODEL = "qwen3:4b"
+cargo run -p rusty-claude-cli -- prompt "Hello FRIDAY"
 ```
 
-Or authenticate via OAuth and let the CLI persist credentials locally:
-
-```bash
-cargo run -p rusty-claude-cli -- login
-```
+The upstream Rust workspace retains legacy provider and OAuth modules for compatibility; FRIDAY's configured prompt runtime uses Ollama.
 
 ## Mock parity harness
 
