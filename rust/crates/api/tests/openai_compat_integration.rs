@@ -83,8 +83,8 @@ async fn ollama_requests_do_not_send_an_authorization_header() {
     )
     .await;
 
-    let client = OpenAiCompatClient::new("", OpenAiCompatConfig::ollama())
-        .with_base_url(server.base_url());
+    let client =
+        OpenAiCompatClient::new("", OpenAiCompatConfig::ollama()).with_base_url(server.base_url());
     let response = client
         .send_message(&MessageRequest {
             model: "qwen3:4b".to_string(),
