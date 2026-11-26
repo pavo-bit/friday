@@ -74,15 +74,15 @@ cargo build --workspace
 ./target/debug/claw prompt "summarize this repository"
 ```
 
-### Authentication
+### Local model setup
 
-```bash
-# Option 1: API Key
-export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b="sk-ant-..."
-
-# Option 2: OAuth
-./target/debug/claw login
+```powershell
+ollama pull qwen3:4b
+$env:OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+$env:OLLAMA_MODEL = "qwen3:4b"
 ```
+
+FRIDAY does not require a paid model API key. Legacy OAuth/provider utilities remain in the upstream Rust workspace but are not used by the default FRIDAY prompt runtime.
 
 ---
 
@@ -222,7 +222,9 @@ npm install
 
 # 2. Configure environment
 cp .env.example .env
-# Set OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b
+# Set these local Ollama values in friday/.env:
+# OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
+# OLLAMA_MODEL=qwen3:4b
 
 # 3. Build Claw (if not already built)
 cd ../rust
@@ -278,7 +280,7 @@ Return to user (text/voice/WebSocket)
 FRIDAY communicates with Claw through:
 1. **Process Execution**: Uses Node.js `execFile()` to invoke the Claw binary
 2. **Command Line Arguments**: `claw prompt "<user_request>"`
-3. **Environment Variables**: Passes `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b` and configuration
+3. **Environment Variables**: Passes `OLLAMA_BASE_URL`, `OLLAMA_MODEL`, and other local configuration
 4. **STDOUT/STDERR**: Captures Claw's output and returns to user
 
 ### Example Interaction
@@ -519,7 +521,7 @@ Part of the **UltraWorkers** toolchain:
    ```bash
    cd ../friday
    cp .env.example .env
-   # Edit .env and add OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b
+   # Edit .env and set OLLAMA_BASE_URL and OLLAMA_MODEL for local Ollama
    ```
 
 3. **Install and Run:**
@@ -539,9 +541,10 @@ Part of the **UltraWorkers** toolchain:
    cargo build --workspace
    ```
 
-2. **Set API Key:**
-   ```bash
-   export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b="sk-ant-..."
+2. **Start local Ollama:**
+   ```powershell
+   ollama serve
+   ollama pull qwen3:4b
    ```
 
 3. **Run:**

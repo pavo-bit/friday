@@ -1034,7 +1034,7 @@ Response:
 4. **Input validation**: All inputs sanitized and validated
 5. **Command injection protection**: Uses execFile() for Claw invocation, not shell interpolation
 6. **Allowed directories**: File operations restricted to configured paths
-7. **API key security**: Store ANTHROPIC_API_KEY securely in .env (never commit)
+7. **Local model privacy**: FRIDAY sends prompts to the configured local Ollama server; no paid model API key is required.
 
 ---
 
