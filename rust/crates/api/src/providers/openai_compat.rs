@@ -204,7 +204,8 @@ impl OpenAiCompatClient {
         request: &MessageRequest,
     ) -> Result<reqwest::Response, ApiError> {
         let request_url = chat_completions_endpoint(&self.base_url);
-        let mut builder = self.http
+        let mut builder = self
+            .http
             .post(&request_url)
             .header("content-type", "application/json");
         if !self.api_key.trim().is_empty() {
