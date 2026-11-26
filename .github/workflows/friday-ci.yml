@@ -1,0 +1,44 @@
+name: FRIDAY TypeScript and UI CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "friday/**"
+      - "web-ui/**"
+      - ".github/workflows/friday-ci.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "friday/**"
+      - "web-ui/**"
+      - ".github/workflows/friday-ci.yml"
+
+concurrency:
+  group: friday-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: TypeScript build and UI syntax
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: friday
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: friday/package-lock.json
+      - name: Install dependencies
+        run: npm ci
+      - name: Build FRIDAY
+        run: npm run build
+      - name: Check dashboard JavaScript syntax
+        run: |
+          node --check ../web-ui/server.js
+          node --check ../web-ui/script.js
