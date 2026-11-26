@@ -149,10 +149,7 @@ fn config_command_loads_defaults_from_standard_config_locations() {
     let session_path = write_session(&temp_dir, "config-defaults");
 
     // when
-    let ollama_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Ollama probe listener");
-    let ollama_url = format!("http://{}/v1", ollama_listener.local_addr().expect("listener address"));
     let output = command_in(&temp_dir)
-        .env("OLLAMA_BASE_URL", &ollama_url)
         .env("CLAW_CONFIG_HOME", &config_home)
         .args([
             "--resume",
@@ -196,7 +193,10 @@ fn doctor_command_runs_as_a_local_shell_entrypoint() {
     fs::create_dir_all(&config_home).expect("config home should exist");
 
     // when
+    let ollama_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Ollama probe listener");
+    let ollama_url = format!("http://{}/v1", ollama_listener.local_addr().expect("listener address"));
     let output = command_in(&temp_dir)
+        .env("OLLAMA_BASE_URL", &ollama_url)
         .env("CLAW_CONFIG_HOME", &config_home)
         .arg("doctor")
         .output()
