@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1109,132 +1109,23 @@ fn run_doctor(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::
 
 #[allow(clippy::too_many_lines)]
 fn check_auth_health() -> DiagnosticCheck {
-    let api_key_present = env::var("ANTHROPIC_API_KEY")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty());
-    let auth_token_present = env::var("ANTHROPIC_AUTH_TOKEN")
-        .ok()
-        .is_some_and(|value| !value.trim().is_empty());
-
-    match load_oauth_credentials() {
-        Ok(Some(token_set)) => {
-            let expired = oauth_token_is_expired(&api::OAuthTokenSet {
-                access_token: token_set.access_token.clone(),
-                refresh_token: token_set.refresh_token.clone(),
-                expires_at: token_set.expires_at,
-                scopes: token_set.scopes.clone(),
-            });
-            let mut details = vec![
-                format!(
-                    "Environment       api_key={} auth_token={}",
-                    if api_key_present { "present" } else { "absent" },
-                    if auth_token_present {
-                        "present"
-                    } else {
-                        "absent"
-                    }
-                ),
-                format!(
-                    "Saved OAuth       expires_at={} refresh_token={} scopes={}",
-                    token_set
-                        .expires_at
-                        .map_or_else(|| "<none>".to_string(), |value| value.to_string()),
-                    if token_set.refresh_token.is_some() {
-                        "present"
-                    } else {
-                        "absent"
-                    },
-                    if token_set.scopes.is_empty() {
-                        "<none>".to_string()
-                    } else {
-                        token_set.scopes.join(",")
-                    }
-                ),
-            ];
-            if expired {
-                details.push(
-                    "Suggested action  claw login to refresh local OAuth credentials".to_string(),
-                );
-            }
-            DiagnosticCheck::new(
-                "Auth",
-                if expired {
-                    DiagnosticLevel::Warn
-                } else {
-                    DiagnosticLevel::Ok
-                },
-                if expired {
-                    "saved OAuth credentials are present but expired"
-                } else if api_key_present || auth_token_present {
-                    "environment and saved credentials are available"
-                } else {
-                    "saved OAuth credentials are available"
-                },
-            )
-            .with_details(details)
-            .with_data(Map::from_iter([
-                ("api_key_present".to_string(), json!(api_key_present)),
-                ("auth_token_present".to_string(), json!(auth_token_present)),
-                ("saved_oauth_present".to_string(), json!(true)),
-                ("saved_oauth_expired".to_string(), json!(expired)),
-                (
-                    "saved_oauth_expires_at".to_string(),
-                    json!(token_set.expires_at),
-                ),
-                (
-                    "refresh_token_present".to_string(),
-                    json!(token_set.refresh_token.is_some()),
-                ),
-                ("scopes".to_string(), json!(token_set.scopes)),
-            ]))
-        }
-        Ok(None) => DiagnosticCheck::new(
-            "Auth",
-            if api_key_present || auth_token_present {
-                DiagnosticLevel::Ok
-            } else {
-                DiagnosticLevel::Warn
-            },
-            if api_key_present || auth_token_present {
-                "environment credentials are configured"
-            } else {
-                "no API key or saved OAuth credentials were found"
-            },
-        )
-        .with_details(vec![format!(
-            "Environment       api_key={} auth_token={}",
-            if api_key_present { "present" } else { "absent" },
-            if auth_token_present {
-                "present"
-            } else {
-                "absent"
-            }
-        )])
-        .with_data(Map::from_iter([
-            ("api_key_present".to_string(), json!(api_key_present)),
-            ("auth_token_present".to_string(), json!(auth_token_present)),
-            ("saved_oauth_present".to_string(), json!(false)),
-            ("saved_oauth_expired".to_string(), json!(false)),
-            ("saved_oauth_expires_at".to_string(), Value::Null),
-            ("refresh_token_present".to_string(), json!(false)),
-            ("scopes".to_string(), json!(Vec::<String>::new())),
-        ])),
-        Err(error) => DiagnosticCheck::new(
-            "Auth",
-            DiagnosticLevel::Fail,
-            format!("failed to inspect saved credentials: {error}"),
-        )
-        .with_data(Map::from_iter([
-            ("api_key_present".to_string(), json!(api_key_present)),
-            ("auth_token_present".to_string(), json!(auth_token_present)),
-            ("saved_oauth_present".to_string(), Value::Null),
-            ("saved_oauth_expired".to_string(), Value::Null),
-            ("saved_oauth_expires_at".to_string(), Value::Null),
-            ("refresh_token_present".to_string(), Value::Null),
-            ("scopes".to_string(), Value::Null),
-            ("saved_oauth_error".to_string(), json!(error.to_string())),
-        ])),
-    }
+    let address = "127.0.0.1:11434"
+        .parse()
+        .expect("static Ollama socket address should parse");
+    let available = TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok();
+    DiagnosticCheck::new(
+        "Ollama",
+        if available { DiagnosticLevel::Ok } else { DiagnosticLevel::Fail },
+        if available {
+            "local Ollama server is reachable"
+        } else {
+            "Ollama is not reachable; start it with `ollama serve`"
+        },
+    )
+    .with_details(vec![
+        "No provider API key is used for local inference".to_string(),
+        "Default model: qwen3:4b".to_string(),
+    ])
 }
 
 fn check_config_health(

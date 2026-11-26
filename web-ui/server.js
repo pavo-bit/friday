@@ -89,7 +89,7 @@ app.post('/api/chat', (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/health', async (_req, res) => {
     const clawExists = fs.existsSync(CLAW_EXE);
-    const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\\/$/, '');
+    const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/v1\/?$/, '').replace(/\/$/, '');
     const model = process.env.OLLAMA_MODEL || 'qwen3:4b';
     let ollamaOnline = false;
     let models = [];

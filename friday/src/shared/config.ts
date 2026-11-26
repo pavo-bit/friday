@@ -39,7 +39,7 @@ export function loadConfig(): FridayConfig {
     port: parseInt(process.env.FRIDAY_PORT || '3141', 10),
     host: process.env.FRIDAY_HOST || '127.0.0.1',
     clawBinaryPath: process.env.CLAW_BINARY_PATH || detectClawBinary(),
-    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434/v1',
     ollamaModel: process.env.OLLAMA_MODEL || 'qwen3:4b',
 
     // Safety
@@ -49,7 +49,7 @@ export function loadConfig(): FridayConfig {
 
     // Voice
     sttEngine: (process.env.STT_ENGINE as FridayConfig['sttEngine']) || 'none',
-    ttsEngine: (process.env.TTS_ENGINE as FridayConfig['ttsEngine']) || 'edge',
+    ttsEngine: (process.env.TTS_ENGINE as FridayConfig['ttsEngine']) || 'none',
     wakeWord: process.env.WAKE_WORD || 'friday',
 
     // Memory
