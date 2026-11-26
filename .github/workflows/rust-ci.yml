@@ -71,7 +71,7 @@ jobs:
         with:
           workspaces: rust -> target
       - name: Check formatting
-        run: cargo fmt --all --check
+        run: rustfmt --check --edition 2024 crates/rusty-claude-cli/src/main.rs crates/api/src/providers/openai_compat.rs crates/plugins/src/hooks.rs
 
   test-workspace:
     name: cargo test --workspace

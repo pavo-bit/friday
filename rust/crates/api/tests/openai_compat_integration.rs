@@ -64,6 +64,45 @@ async fn send_message_uses_openai_compatible_endpoint_and_auth() {
 }
 
 #[tokio::test]
+async fn ollama_requests_do_not_send_an_authorization_header() {
+    let state = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
+    let body = concat!(
+        "{",
+        "\"id\":\"chatcmpl_ollama\",",
+        "\"model\":\"qwen3:4b\",",
+        "\"choices\":[{",
+        "\"message\":{\"role\":\"assistant\",\"content\":\"Hello from local Ollama\",\"tool_calls\":[]},",
+        "\"finish_reason\":\"stop\"",
+        "}],",
+        "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":4}",
+        "}"
+    );
+    let server = spawn_server(
+        state.clone(),
+        vec![http_response("200 OK", "application/json", body)],
+    )
+    .await;
+
+    let client = OpenAiCompatClient::new("", OpenAiCompatConfig::ollama())
+        .with_base_url(server.base_url());
+    let response = client
+        .send_message(&MessageRequest {
+            model: "qwen3:4b".to_string(),
+            ..sample_request(false)
+        })
+        .await
+        .expect("local Ollama request should succeed without credentials");
+
+    assert_eq!(response.model, "qwen3:4b");
+    let captured = state.lock().await;
+    let request = captured.first().expect("server should capture request");
+    assert_eq!(request.path, "/chat/completions");
+    assert!(!request.headers.contains_key("authorization"));
+    let payload: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
+    assert_eq!(payload["model"], json!("qwen3:4b"));
+}
+
+#[tokio::test]
 async fn send_message_blocks_oversized_xai_requests_before_the_http_call() {
     let state = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
     let server = spawn_server(

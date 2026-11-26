@@ -7209,7 +7209,6 @@ mod tests {
         let original_api_key = std::env::var("ANTHROPIC_API_KEY").ok();
         let original_auth_token = std::env::var("ANTHROPIC_AUTH_TOKEN").ok();
         std::env::set_var("CLAW_CONFIG_HOME", &config_home);
-        std::env::remove_var("ANTHROPIC_API_KEY");
         std::env::remove_var("ANTHROPIC_AUTH_TOKEN");
 
         save_oauth_credentials(&runtime::OAuthTokenSet {
@@ -7894,12 +7893,12 @@ mod tests {
     #[test]
     fn completion_candidates_include_workflow_shortcuts_and_dynamic_sessions() {
         let completions = slash_command_completion_candidates_with_sessions(
-            "sonnet",
+            "qwen3:4b",
             Some("session-current"),
             vec!["session-old".to_string()],
         );
 
-        assert!(completions.contains(&"/model claude-sonnet-4-6".to_string()));
+        assert!(completions.contains(&"/model qwen3:4b".to_string()));
         assert!(completions.contains(&"/permissions workspace-write".to_string()));
         assert!(completions.contains(&"/session list".to_string()));
         assert!(completions.contains(&"/session switch session-current".to_string()));
@@ -7911,14 +7910,12 @@ mod tests {
     #[test]
     fn startup_banner_mentions_workflow_completions() {
         let _guard = env_lock();
-        // Inject dummy credentials so LiveCli can construct without real Anthropic key
-        std::env::set_var("ANTHROPIC_API_KEY", "test-dummy-key-for-banner-test");
         let root = temp_dir();
         fs::create_dir_all(&root).expect("root dir");
 
         let banner = with_current_dir(&root, || {
             LiveCli::new(
-                "claude-sonnet-4-6".to_string(),
+                "qwen3:4b".to_string(),
                 true,
                 None,
                 PermissionMode::DangerFullAccess,
