@@ -40,10 +40,6 @@ export class TextToSpeech {
     const cleanText = this.sanitizeForTts(text);
 
     try {
-      if (this.engine === 'openai') {
-        return await this.synthesizeOpenAI(cleanText);
-      }
-
       if (this.engine === 'edge') {
         return await this.synthesizeEdge(cleanText);
       }
@@ -54,41 +50,6 @@ export class TextToSpeech {
       log.error('TTS synthesis failed', { error: (error as Error).message });
       return null;
     }
-  }
-
-  /**
-   * Synthesize using OpenAI TTS API.
-   */
-  private async synthesizeOpenAI(text: string): Promise<Buffer | null> {
-    const config = getConfig();
-    if (!config.openaiApiKey) {
-      log.warn('OPENAI_API_KEY required for OpenAI TTS');
-      return null;
-    }
-
-    const fetch = (await import('node-fetch')).default;
-
-    const response = await fetch('https://api.openai.com/v1/audio/speech', {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${config.openaiApiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        model: 'tts-1',
-        input: text.substring(0, 4096), // API limit
-        voice: 'nova', // Professional, clear voice
-        response_format: 'mp3',
-        speed: 1.0,
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenAI TTS error: ${response.status}`);
-    }
-
-    const arrayBuffer = await response.arrayBuffer();
-    return Buffer.from(arrayBuffer);
   }
 
   /**
@@ -165,7 +126,6 @@ export class TextToSpeech {
   /** Check if TTS is available */
   isAvailable(): boolean {
     if (this.engine === 'none') return false;
-    if (this.engine === 'openai') return !!getConfig().openaiApiKey;
     if (this.engine === 'edge') return true; // Edge TTS is free
     return false;
   }
