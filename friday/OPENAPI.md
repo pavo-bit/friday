@@ -769,7 +769,7 @@ FRIDAY is configured via environment variables in `friday/.env`:
 
 ### Required
 ```bash
-ANTHROPIC_API_KEY=sk-ant-...        # Required for Claw AI operations
+OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 # Local Ollama endpoint
 ```
 
 ### Server
@@ -868,7 +868,7 @@ cargo build --workspace
 Create `friday/.env`:
 ```bash
 cp friday/.env.example friday/.env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Set OLLAMA_BASE_URL and OLLAMA_MODEL; no API key is needed
 ```
 
 ### 4. Run

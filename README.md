@@ -28,8 +28,7 @@
   <img src="assets/claw-hero.jpeg" alt="Claw Code" width="300" />
 </p>
 
-Claw Code is the public Rust implementation of the `claw` CLI agent harness.
-The canonical implementation lives in [`rust/`](./rust), and the current source of truth for this repository is **ultraworkers/claw-code**.
+This repository contains FRIDAY, a local-first personal AI assistant. The Rust `claw` runtime is configured to use Ollama for local model inference by default.
 
 > [!IMPORTANT]
 > Start with [`USAGE.md`](./USAGE.md) for build, auth, CLI, session, and parity-harness workflows. Make `claw doctor` your first health check after building, use [`rust/README.md`](./rust/README.md) for crate-level details, read [`PARITY.md`](./PARITY.md) for the current Rust-port checkpoint, and see [`docs/container.md`](./docs/container.md) for the container-first workflow.

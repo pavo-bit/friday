@@ -78,7 +78,7 @@ cargo build --workspace
 
 ```bash
 # Option 1: API Key
-export ANTHROPIC_API_KEY="sk-ant-..."
+export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b="sk-ant-..."
 
 # Option 2: OAuth
 ./target/debug/claw login
@@ -278,7 +278,7 @@ Return to user (text/voice/WebSocket)
 FRIDAY communicates with Claw through:
 1. **Process Execution**: Uses Node.js `execFile()` to invoke the Claw binary
 2. **Command Line Arguments**: `claw prompt "<user_request>"`
-3. **Environment Variables**: Passes `ANTHROPIC_API_KEY` and configuration
+3. **Environment Variables**: Passes `OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b` and configuration
 4. **STDOUT/STDERR**: Captures Claw's output and returns to user
 
 ### Example Interaction
@@ -519,7 +519,7 @@ Part of the **UltraWorkers** toolchain:
    ```bash
    cd ../friday
    cp .env.example .env
-   # Edit .env and add ANTHROPIC_API_KEY
+   # Edit .env and add OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b
    ```
 
 3. **Install and Run:**
@@ -541,7 +541,7 @@ Part of the **UltraWorkers** toolchain:
 
 2. **Set API Key:**
    ```bash
-   export ANTHROPIC_API_KEY="sk-ant-..."
+   export OLLAMA_BASE_URL=http://127.0.0.1:11434/v1 and OLLAMA_MODEL=qwen3:4b="sk-ant-..."
    ```
 
 3. **Run:**
@@ -573,7 +573,7 @@ See the repository root for license information.
 ## Disclaimer
 
 This repository:
-- Does **not** claim ownership of the original Claude Code source material
+- Does **not** claim ownership of the original Ollama Code source material
 - Is **not affiliated with, endorsed by, or maintained by Anthropic**
 - Is part of the open-source **UltraWorkers** ecosystem
 
