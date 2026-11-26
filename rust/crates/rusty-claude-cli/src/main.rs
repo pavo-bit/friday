@@ -14,7 +14,7 @@ use std::collections::BTreeSet;
 use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
+use std::net::{TcpStream, ToSocketAddrs};
 use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -1100,17 +1100,26 @@ fn run_doctor(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::
 
 #[allow(clippy::too_many_lines)]
 fn check_auth_health() -> DiagnosticCheck {
-    let address = "127.0.0.1:11434"
-        .parse()
-        .expect("static Ollama socket address should parse");
-    let available = TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok();
+    let base_url = env::var("OLLAMA_BASE_URL")
+        .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string());
+    let authority = base_url
+        .strip_prefix("http://")
+        .or_else(|| base_url.strip_prefix("https://"))
+        .unwrap_or(&base_url)
+        .split('/')
+        .next()
+        .unwrap_or("127.0.0.1:11434");
+    let available = authority
+        .to_socket_addrs()
+        .ok()
+        .is_some_and(|addresses| {
+            addresses.into_iter().any(|address| {
+                TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok()
+            })
+        });
     DiagnosticCheck::new(
         "Ollama",
-        if available {
-            DiagnosticLevel::Ok
-        } else {
-            DiagnosticLevel::Fail
-        },
+        if available { DiagnosticLevel::Ok } else { DiagnosticLevel::Fail },
         if available {
             "local Ollama server is reachable"
         } else {
@@ -1118,6 +1127,7 @@ fn check_auth_health() -> DiagnosticCheck {
         },
     )
     .with_details(vec![
+        format!("Endpoint: {base_url}"),
         "No provider API key is used for local inference".to_string(),
         "Default model: qwen3:4b".to_string(),
     ])
@@ -8902,7 +8912,6 @@ UU conflicted.rs",
         let _ = fs::remove_dir_all(config_home);
         let _ = fs::remove_dir_all(workspace);
         let _ = fs::remove_dir_all(source_root);
-        std::env::remove_var("ANTHROPIC_API_KEY");
     }
 }
 
