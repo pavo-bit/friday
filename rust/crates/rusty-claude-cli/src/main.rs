@@ -27,7 +27,7 @@ use api::{
     oauth_token_is_expired, resolve_startup_auth_source, AnthropicClient, AuthSource,
     ContentBlockDelta, InputContentBlock, InputMessage, MessageRequest, MessageResponse,
     OpenAiCompatClient, OpenAiCompatConfig, OutputContentBlock, StreamEvent as ApiStreamEvent,
-    ToolChoice, ToolDefinition, ToolResultContentBlock,
+    ToolDefinition, ToolResultContentBlock,
 };
 
 use commands::{
@@ -57,10 +57,10 @@ use tools::{GlobalToolRegistry, RuntimeToolDefinition, ToolSearchOutput};
 
 const DEFAULT_MODEL: &str = "qwen3:4b";
 fn max_tokens_for_model(model: &str) -> u32 {
-    if model.contains("opus") {
-        32_000
+    if model.contains("qwen") {
+        8_192
     } else {
-        64_000
+        16_384
     }
 }
 const DEFAULT_DATE: &str = "2026-03-31";
@@ -736,12 +736,7 @@ fn levenshtein_distance(left: &str, right: &str) -> usize {
 }
 
 fn resolve_model_alias(model: &str) -> &str {
-    match model {
-        "opus" => "claude-opus-4-6",
-        "sonnet" => "claude-sonnet-4-6",
-        "haiku" => "claude-haiku-4-5-20251213",
-        _ => model,
-    }
+    model
 }
 
 fn normalize_allowed_tools(values: &[String]) -> Result<Option<AllowedToolSet>, String> {
@@ -5870,9 +5865,7 @@ fn slash_command_completion_candidates_with_sessions(
         "/export ",
         "/issue ",
         "/model ",
-        "/model opus",
-        "/model sonnet",
-        "/model haiku",
+        "/model qwen3:4b",
         "/permissions ",
         "/permissions read-only",
         "/permissions workspace-write",
@@ -6731,7 +6724,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "  Use /session list in the REPL to browse managed sessions"
     )?;
     writeln!(out, "Examples:")?;
-    writeln!(out, "  claw --model claude-opus \"summarize this repo\"")?;
+    writeln!(out, "  claw --model qwen3:4b \"summarize this repo\"")?;
     writeln!(
         out,
         "  claw --output-format json prompt \"explain src/main.rs\""
@@ -7317,7 +7310,7 @@ mod tests {
             parse_args(&args).expect("args should parse"),
             CliAction::Prompt {
                 prompt: "explain this".to_string(),
-                model: "claude-opus-4-6".to_string(),
+                model: "opus".to_string(),
                 output_format: CliOutputFormat::Text,
                 allowed_tools: None,
                 permission_mode: PermissionMode::DangerFullAccess,
@@ -7327,10 +7320,8 @@ mod tests {
 
     #[test]
     fn resolves_known_model_aliases() {
-        assert_eq!(resolve_model_alias("opus"), "claude-opus-4-6");
-        assert_eq!(resolve_model_alias("sonnet"), "claude-sonnet-4-6");
-        assert_eq!(resolve_model_alias("haiku"), "claude-haiku-4-5-20251213");
-        assert_eq!(resolve_model_alias("claude-opus"), "claude-opus");
+        assert_eq!(resolve_model_alias("qwen3:4b"), "qwen3:4b");
+        assert_eq!(resolve_model_alias("llama3.2:3b"), "llama3.2:3b");
     }
 
     #[test]
