@@ -91,7 +91,7 @@ fn status_command_applies_cli_flags_end_to_end() {
         &temp_dir,
         &[
             "--model",
-            "sonnet",
+            "qwen3:4b",
             "--permission-mode",
             "read-only",
             "status",
@@ -108,7 +108,7 @@ fn status_command_applies_cli_flags_end_to_end() {
 
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
     assert!(stdout.contains("Status"));
-    assert!(stdout.contains("Model            claude-sonnet-4-6"));
+    assert!(stdout.contains("Model            qwen3:4b"));
     assert!(stdout.contains("Permission mode  read-only"));
 }
 
@@ -127,11 +127,11 @@ fn resumed_config_command_loads_settings_files_end_to_end() {
         .save_to_path(&session_path)
         .expect("session should persist");
 
-    fs::write(config_home.join("settings.json"), r#"{"model":"haiku"}"#)
+    fs::write(config_home.join("settings.json"), r#"{"model":"llama3.2:3b"}"#)
         .expect("user config should write");
     fs::write(
         project_dir.join(".claw").join("settings.local.json"),
-        r#"{"model":"opus"}"#,
+        r#"{"model":"qwen3:4b"}"#,
     )
     .expect("local config should write");
 
@@ -172,7 +172,7 @@ fn resumed_config_command_loads_settings_files_end_to_end() {
             .expect("utf8 path")
     ));
     assert!(stdout.contains("Merged section: model"));
-    assert!(stdout.contains("opus"));
+    assert!(stdout.contains("qwen3:4b"));
 }
 
 #[test]

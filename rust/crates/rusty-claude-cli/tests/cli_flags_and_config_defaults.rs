@@ -19,7 +19,7 @@ fn status_command_applies_model_and_permission_mode_flags() {
         .current_dir(&temp_dir)
         .args([
             "--model",
-            "sonnet",
+            "qwen3:4b",
             "--permission-mode",
             "read-only",
             "status",
@@ -31,7 +31,7 @@ fn status_command_applies_model_and_permission_mode_flags() {
     assert_success(&output);
     let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
     assert!(stdout.contains("Status"));
-    assert!(stdout.contains("Model            claude-sonnet-4-6"));
+    assert!(stdout.contains("Model            qwen3:4b"));
     assert!(stdout.contains("Permission mode  read-only"));
 
     fs::remove_dir_all(temp_dir).expect("cleanup temp dir");
@@ -137,19 +137,22 @@ fn config_command_loads_defaults_from_standard_config_locations() {
     fs::create_dir_all(temp_dir.join(".claw")).expect("project config dir should exist");
     fs::create_dir_all(&config_home).expect("home config dir should exist");
 
-    fs::write(config_home.join("settings.json"), r#"{"model":"haiku"}"#)
+    fs::write(config_home.join("settings.json"), r#"{"model":"llama3.2:3b"}"#)
         .expect("write user settings");
-    fs::write(temp_dir.join(".claw.json"), r#"{"model":"sonnet"}"#)
+    fs::write(temp_dir.join(".claw.json"), r#"{"model":"qwen3:4b"}"#)
         .expect("write project settings");
     fs::write(
         temp_dir.join(".claw").join("settings.local.json"),
-        r#"{"model":"opus"}"#,
+        r#"{"model":"qwen3:4b"}"#,
     )
     .expect("write local settings");
     let session_path = write_session(&temp_dir, "config-defaults");
 
     // when
+    let ollama_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Ollama probe listener");
+    let ollama_url = format!("http://{}/v1", ollama_listener.local_addr().expect("listener address"));
     let output = command_in(&temp_dir)
+        .env("OLLAMA_BASE_URL", &ollama_url)
         .env("CLAW_CONFIG_HOME", &config_home)
         .args([
             "--resume",
@@ -166,7 +169,7 @@ fn config_command_loads_defaults_from_standard_config_locations() {
     assert!(stdout.contains("Config"));
     assert!(stdout.contains("Loaded files      3"));
     assert!(stdout.contains("Merged section: model"));
-    assert!(stdout.contains("opus"));
+    assert!(stdout.contains("qwen3:4b"));
     assert!(stdout.contains(
         config_home
             .join("settings.json")
@@ -195,9 +198,6 @@ fn doctor_command_runs_as_a_local_shell_entrypoint() {
     // when
     let output = command_in(&temp_dir)
         .env("CLAW_CONFIG_HOME", &config_home)
-        .env_remove("ANTHROPIC_API_KEY")
-        .env_remove("ANTHROPIC_AUTH_TOKEN")
-        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
         .arg("doctor")
         .output()
         .expect("claw doctor should launch");
@@ -223,17 +223,11 @@ fn local_subcommand_help_does_not_fall_through_to_runtime_or_provider_calls() {
 
     let doctor_help = command_in(&temp_dir)
         .env("CLAW_CONFIG_HOME", &config_home)
-        .env_remove("ANTHROPIC_API_KEY")
-        .env_remove("ANTHROPIC_AUTH_TOKEN")
-        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
         .args(["doctor", "--help"])
         .output()
         .expect("doctor help should launch");
     let status_help = command_in(&temp_dir)
         .env("CLAW_CONFIG_HOME", &config_home)
-        .env_remove("ANTHROPIC_API_KEY")
-        .env_remove("ANTHROPIC_AUTH_TOKEN")
-        .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
         .args(["status", "--help"])
         .output()
         .expect("status help should launch");
