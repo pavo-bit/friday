@@ -15,6 +15,8 @@ import { WsMessage, WsMessageType } from '../shared/types';
 import { fridayRoutes } from './routes/friday';
 import { memoryRoutes } from './routes/memory';
 import { healthRoutes } from './routes/health';
+import { assistantRoutes } from './routes/assistant';
+import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
 
@@ -53,6 +55,46 @@ export class FridayServer {
       next();
     });
 
+    // Origin validation + Bearer token authentication for remote/companion access
+    this.app.use(async (req, res, next) => {
+      const origin = req.get('origin');
+      const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1', getConfig().host]);
+
+      if (origin) {
+        try {
+          const originHost = new URL(origin).hostname;
+          if (!allowedHosts.has(originHost)) {
+            res.status(403).json({ error: 'Cross-origin request rejected' });
+            return;
+          }
+        } catch {
+          res.status(403).json({ error: 'Invalid request origin' });
+          return;
+        }
+      }
+
+      const isLocalIp =
+        req.ip === '127.0.0.1' ||
+        req.ip === '::1' ||
+        req.ip === '::ffff:127.0.0.1' ||
+        allowedHosts.has(req.hostname);
+
+      const publicPaths = new Set(['/friday/health', '/friday/auth/pair']);
+      if (isLocalIp || publicPaths.has(req.path) || !req.path.startsWith('/friday')) {
+        next();
+        return;
+      }
+
+      const authHeader = req.get('authorization') || '';
+      const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
+      const device = await getAuthService().verifyToken(token);
+      if (!device) {
+        res.status(401).json({ error: 'Unauthorized: valid paired device bearer token required' });
+        return;
+      }
+      next();
+    });
+
     // Simple rate limiting (per IP)
     const requestCounts = new Map<string, { count: number; resetAt: number }>();
     this.app.use((req, res, next) => {
@@ -82,6 +124,7 @@ export class FridayServer {
     this.app.use('/friday', fridayRoutes);
     this.app.use('/friday/memory', memoryRoutes);
     this.app.use('/friday', healthRoutes);
+    this.app.use('/friday', assistantRoutes);
 
     // Fallback — serve the dashboard
     this.app.get('/', (_req, res) => {

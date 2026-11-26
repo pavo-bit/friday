@@ -160,6 +160,9 @@ export enum WsMessageType {
   APPROVAL_NEEDED = 'approval_needed',
   TTS_AUDIO = 'tts_audio',
   SYSTEM_STATUS = 'system_status',
+  WATCHER_UPDATED = 'watcher:updated',
+  NOTIFICATION_NEW = 'notification:new',
+  REMINDER_TRIGGERED = 'reminder:triggered',
   ERROR = 'error',
 }
 

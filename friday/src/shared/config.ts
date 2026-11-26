@@ -20,6 +20,7 @@ function detectClawBinary(): string {
     path.join(CLAW_ROOT, 'rust', 'target', 'debug', 'claw'),
     path.join(CLAW_ROOT, 'rust', 'target', 'release', 'claw.exe'),
     path.join(CLAW_ROOT, 'rust', 'target', 'release', 'claw'),
+    path.join(CLAW_ROOT, 'rust', 'target', 'debug', 'claw.js'),
   ];
 
   for (const candidate of candidates) {

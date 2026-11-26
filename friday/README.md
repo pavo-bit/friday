@@ -1,71 +1,52 @@
-# FRIDAY — Local Ollama setup
+# FRIDAY — Local-First Personal AI Assistant
 
-FRIDAY's default agent inference runs through the Rust Claw runtime using a local Ollama server. No Anthropic or OpenAI model API key is required for this default path.
+FRIDAY is a persistent, local-first personal AI assistant inspired by JARVIS. It runs locally on Node.js + TypeScript + SQLite and uses **Ollama** (`qwen3:4b` default, `qwen3:8b` configurable) for private local inference — **zero paid API keys required**.
 
-## Windows quick start
+## Architecture & Subsystems
 
-1. Install [Ollama for Windows](https://ollama.com/download/windows).
-2. Open PowerShell and pull the default model:
+1. **Personality Engine** (`src/intelligence/personality.ts`): Configurable formality, humor, verbosity, timezone-aware greetings, and strict truthfulness rules.
+2. **Memory & Context Engine** (`src/memory/store.ts`, `src/memory/migrations.ts`, `src/memory/redaction.ts`): Versioned SQLite migrations, bounded context retrieval, secret redaction, retention pruning, and hot backups.
+3. **Typed Tool Registry** (`src/orchestration/toolRegistry.ts`): 18 schema-validated, risk-classified, audited tools including `start_dashboard_watch`, `create_reminder`, `create_alarm`, `check_ollama_status`, `send_notification`, etc.
+4. **Dashboard Monitoring Engine** (`src/services/monitoringEngine.ts`): Persistent watchers with real background workers, HTTP/Prometheus/Grafana/JSON/Postgres/Redis probes, retry/backoff, alert deduplication, and restart recovery.
+5. **Scheduler, Alarms & Reminders** (`src/services/schedulerService.ts`): One-time, recurring, and geofence-triggered reminders with missed-event recovery.
+6. **Location Intelligence** (`src/services/locationService.ts`): Opt-in named geofences (`college`, `home`, etc.) and entry/exit triggers.
+7. **Security & Device Pairing** (`src/services/authService.ts`): Localhost/origin validation, 6-digit pairing codes, SHA-256 hashed bearer tokens, token rotation, and audit logs.
+8. **Command Center Web Dashboard** (`ui/`): Dark-mode dashboard for chat, monitoring, reminders, notifications, memory, voice, and settings.
+9. **Android Companion** (`../friday_companion/`): Flutter mobile app with 12 screens, pairing, voice, geofencing, and offline brain status detection.
 
+## Windows Quick Start
+
+1. **Install Ollama**:
+   Download [Ollama for Windows](https://ollama.com/download/windows), then start and pull the default model:
    ```powershell
+   ollama serve
    ollama pull qwen3:4b
    ```
 
-3. From the repository root, build the Rust CLI:
-
+2. **Configure & Start FRIDAY**:
    ```powershell
-   cd rust
-   cargo build -p rusty-claude-cli
-   ```
-
-4. Configure FRIDAY:
-
-   ```powershell
-   cd ../friday
-   Copy-Item .env.example .env
-   ```
-
-   Keep these values in `friday/.env`:
-
-   ```dotenv
-   OLLAMA_BASE_URL=http://127.0.0.1:11434/v1
-   OLLAMA_MODEL=qwen3:4b
-   STT_ENGINE=none
-   TTS_ENGINE=none
-   ```
-
-5. Build and start the FRIDAY API:
-
-   ```powershell
-   npm ci
-   npm run build
-   npm run dev
-   ```
-
-6. In a second PowerShell window, start the dashboard:
-
-   ```powershell
-   cd web-ui
+   cd friday
    npm install
    Copy-Item .env.example .env
+   npm test
    npm start
    ```
+   Open [http://127.0.0.1:3141](http://127.0.0.1:3141).
 
-   Open http://127.0.0.1:3000.
+3. **(Optional) Build Rust Claw Runtime**:
+   ```powershell
+   cd ../rust
+   cargo build -p rusty-claude-cli
+   ```
+   If Rust/MSVC is not installed on Windows, FRIDAY automatically uses the portable runtime at `rust/target/debug/claw.js`.
 
-## Voice
+## Key API Endpoints
 
-- **Input:** the dashboard microphone uses the browser Web Speech API. Use Chrome or Edge and allow microphone access. Browser recognition may use an online speech service; it is not guaranteed to work offline.
-- **Output:** the dashboard uses the browser SpeechSynthesis API and voices installed by Windows/browser. It requires no paid API key.
-- Server-side audio-upload STT is intentionally disabled until a local offline recognizer is integrated.
-
-## Model selection
-
-Set `OLLAMA_MODEL` in `friday/.env` and `web-ui/.env` to a model already pulled in Ollama. The default is `qwen3:4b`. The Rust CLI also accepts `--model <model-name>`.
-
-## Troubleshooting
-
-- Check Ollama: `ollama list`
-- Start the server: `ollama serve`
-- Verify the OpenAI-compatible endpoint: `http://127.0.0.1:11434/v1`
-- If the dashboard reports the Claw binary is missing, run `cargo build -p rusty-claude-cli` from `rust/`.
+- `POST /friday/run` — Natural-language command & tool execution
+- `GET /friday/health`, `GET /friday/ollama/status` — System & Ollama health
+- `GET/POST /friday/watchers`, `POST /friday/watchers/:id/{pause,resume,stop}`, `GET /friday/watchers/history`
+- `GET/POST/PUT/DELETE /friday/reminders`
+- `GET /friday/notifications`, `POST /friday/notifications/{:id/read,read-all}`
+- `GET/POST/DELETE /friday/locations`, `POST /friday/locations/geofence`
+- `GET/PUT /friday/personality`, `GET /friday/tools`, `GET /friday/audit`, `POST /friday/backup`
+- `POST /friday/auth/pair-code`, `POST /friday/auth/pair`, `GET /friday/auth/devices`, `POST /friday/auth/devices/:id/rotate`, `DELETE /friday/auth/devices/:id`

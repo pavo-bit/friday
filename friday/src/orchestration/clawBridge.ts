@@ -4,7 +4,7 @@
 // Uses execFile() for process isolation and injection safety.
 // ============================================================
 
-import { execFile, ChildProcess } from 'child_process';
+import { execFile, ChildProcess, ExecFileException } from 'child_process';
 import * as fs from 'fs';
 import { createLayerLogger } from '../shared/logger';
 import { getConfig } from '../shared/config';
@@ -125,16 +125,21 @@ export class ClawBridge {
       // CRITICAL: execFile passes arguments as an array directly to the
       // executable, completely bypassing shell interpretation.
       // This makes command injection IMPOSSIBLE.
+      const isJs = this.binaryPath.endsWith('.js');
+      const bin = isJs ? process.execPath : this.binaryPath;
+      const args = isJs ? [this.binaryPath, 'prompt', prompt] : ['prompt', prompt];
+
       const child = execFile(
-        this.binaryPath,
-        ['prompt', prompt],
+        bin,
+        args,
         {
+          encoding: 'utf8',
           env,
           timeout,
           maxBuffer,
           cwd: cwd || undefined,
         },
-        (error, stdout, stderr) => {
+        (error: ExecFileException | null, stdout: string, stderr: string) => {
           const durationMs = Date.now() - startTime;
           this.activeProcesses.delete(invocationId);
 

@@ -89,3 +89,53 @@ memoryRoutes.get('/stats', async (_req: Request, res: Response) => {
   const store = await getMemoryStore();
   res.json(store.getStats());
 });
+
+/**
+ * PUT /friday/memory/:id
+ * Update a specific memory entry.
+ */
+memoryRoutes.put('/:id', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const { value } = req.body as { value?: string };
+  if (!value || typeof value !== 'string') {
+    res.status(400).json({ error: 'Missing "value" string' });
+    return;
+  }
+  try {
+    const store = await getMemoryStore();
+    const updated = store.updateMemory(id, value);
+    if (!updated) {
+      res.status(404).json({ error: 'Memory not found' });
+      return;
+    }
+    res.json({ updated: true, id });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * DELETE /friday/memory/:id
+ * Delete a specific memory entry.
+ */
+memoryRoutes.delete('/:id', async (req: Request, res: Response) => {
+  const id = String(req.params.id);
+  const store = await getMemoryStore();
+  const deleted = store.deleteMemory(id);
+  if (!deleted) {
+    res.status(404).json({ error: 'Memory not found' });
+    return;
+  }
+  res.json({ deleted: true, id });
+});
+
+/**
+ * POST /friday/memory/prune
+ * Prune memories older than retentionDays.
+ */
+memoryRoutes.post('/prune', async (req: Request, res: Response) => {
+  const { retentionDays = 30 } = req.body as { retentionDays?: number };
+  const store = await getMemoryStore();
+  const pruned = store.pruneMemories(Number(retentionDays));
+  res.json({ pruned, retentionDays });
+});

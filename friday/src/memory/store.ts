@@ -1,6 +1,6 @@
 // ============================================================
 // FRIDAY — Memory Store
-// SQLite-backed persistent memory for conversations, prefs, contacts
+// SQLite-backed persistent memory, migrations, audit & context
 // ============================================================
 
 import * as path from 'path';
@@ -9,71 +9,26 @@ import { createLayerLogger } from '../shared/logger';
 import { getConfig } from '../shared/config';
 import { eventBus } from '../shared/events';
 import { MemoryEntry, FridayId } from '../shared/types';
+import { runMigrations } from './migrations';
+import { redactSecrets, containsSensitiveCredential } from './redaction';
+import {
+  PersonalityProfile,
+  DEFAULT_PERSONALITY_PROFILE,
+} from '../intelligence/personality';
 import { v4 as uuidv4 } from 'uuid';
+import type Database from 'better-sqlite3';
 
 const log = createLayerLogger('Memory');
 
-/** SQL schema for the FRIDAY database */
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS memories (
-    id TEXT PRIMARY KEY,
-    type TEXT NOT NULL CHECK(type IN ('conversation', 'task', 'preference', 'contact', 'fact')),
-    key TEXT NOT NULL,
-    value TEXT NOT NULL,
-    metadata TEXT DEFAULT '{}',
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    last_accessed_at TEXT NOT NULL DEFAULT (datetime('now')),
-    access_count INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
-  CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
-  CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
-
-  CREATE TABLE IF NOT EXISTS task_log (
-    id TEXT PRIMARY KEY,
-    intent_id TEXT NOT NULL,
-    action TEXT NOT NULL,
-    input TEXT NOT NULL,
-    output TEXT,
-    success INTEGER NOT NULL DEFAULT 0,
-    risk TEXT NOT NULL,
-    executor TEXT NOT NULL,
-    duration_ms INTEGER,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_task_log_created ON task_log(created_at);
-
-  CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY,
-    role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
-    content TEXT NOT NULL,
-    intent_action TEXT,
-    session_id TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
-  CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
-`;
-
-/**
- * MemoryStore — FRIDAY's persistent brain.
- *
- * Stores conversations, task history, user preferences, contacts,
- * and factual knowledge in a SQLite database. Supports simple
- * keyword-based retrieval (expandable to vector search later).
- */
 export class MemoryStore {
-  private db: import('better-sqlite3').Database | null = null;
+  private db: Database.Database | null = null;
   private dbPath: string;
 
-  constructor() {
-    this.dbPath = getConfig().dbPath;
+  constructor(customDbPath?: string) {
+    this.dbPath = customDbPath || getConfig().dbPath;
   }
 
-  /** Initialize the database connection and create schema */
+  /** Initialize the database connection and run versioned migrations */
   async initialize(): Promise<void> {
     const dir = path.dirname(this.dbPath);
     if (!fs.existsSync(dir)) {
@@ -81,39 +36,79 @@ export class MemoryStore {
     }
 
     try {
-      // Dynamic import to handle the native module gracefully
-      const Database = (await import('better-sqlite3')).default;
-      this.db = new Database(this.dbPath);
+      const DatabaseCtor = (await import('better-sqlite3')).default;
+      this.db = new DatabaseCtor(this.dbPath);
       this.db.pragma('journal_mode = WAL');
       this.db.pragma('foreign_keys = ON');
-      this.db.exec(SCHEMA);
+      runMigrations(this.db);
       log.info('Memory database initialized', { path: this.dbPath });
     } catch (error) {
       log.error('Failed to initialize memory database', { error: (error as Error).message });
       log.warn('Memory will run in volatile (in-memory) mode');
-      // Fall through — methods will check for null db
     }
   }
 
-  /** Store a memory entry */
+  /** Expose underlying SQLite database for domain repositories */
+  getDatabase(): Database.Database | null {
+    return this.db;
+  }
+
+  /** Store a memory entry (redacting any accidental secrets) */
   store(
     type: MemoryEntry['type'],
     key: string,
     value: string,
     metadata: Record<string, string> = {}
   ): FridayId {
+    if (containsSensitiveCredential(value)) {
+      throw new Error('Refusing to store plaintext passwords, API keys, or auth tokens in memory.');
+    }
+
     const id = uuidv4();
+    const safeKey = redactSecrets(key);
+    const safeValue = redactSecrets(value);
 
     if (this.db) {
       const stmt = this.db.prepare(
         `INSERT INTO memories (id, type, key, value, metadata) VALUES (?, ?, ?, ?, ?)`
       );
-      stmt.run(id, type, key, value, JSON.stringify(metadata));
+      stmt.run(id, type, safeKey, safeValue, JSON.stringify(metadata));
     }
 
-    eventBus.emitEvent('memory:stored', key, type);
-    log.debug(`Stored memory: [${type}] ${key}`, { id });
+    eventBus.emitEvent('memory:stored', safeKey, type);
+    log.debug(`Stored memory: [${type}] ${safeKey}`, { id });
     return id;
+  }
+
+  /** Update an existing memory entry */
+  updateMemory(id: string, value: string): boolean {
+    if (!this.db) return false;
+    if (containsSensitiveCredential(value)) {
+      throw new Error('Refusing to store plaintext passwords, API keys, or auth tokens in memory.');
+    }
+    const safeValue = redactSecrets(value);
+    const info = this.db
+      .prepare(`UPDATE memories SET value = ?, last_accessed_at = datetime('now') WHERE id = ?`)
+      .run(safeValue, id);
+    return info.changes > 0;
+  }
+
+  /** Delete an individual memory entry */
+  deleteMemory(id: string): boolean {
+    if (!this.db) return false;
+    const info = this.db.prepare(`DELETE FROM memories WHERE id = ?`).run(id);
+    return info.changes > 0;
+  }
+
+  /** Prune memories older than N days (configurable retention) */
+  pruneMemories(retentionDays: number): number {
+    if (!this.db || retentionDays <= 0) return 0;
+    const info = this.db
+      .prepare(
+        `DELETE FROM memories WHERE type != 'preference' AND datetime(last_accessed_at) < datetime('now', ?)`
+      )
+      .run(`-${retentionDays} days`);
+    return info.changes;
   }
 
   /** Retrieve memories by type and optional key pattern */
@@ -165,7 +160,7 @@ export class MemoryStore {
     return results;
   }
 
-  /** Search memories using keyword matching (RAG-lite) */
+  /** Search memories using keyword matching */
   search(query: string, limit = 10): MemoryEntry[] {
     if (!this.db || !query.trim()) return [];
 
@@ -176,7 +171,6 @@ export class MemoryStore {
 
     if (keywords.length === 0) return [];
 
-    // Build a LIKE-based search (upgradable to FTS5 later)
     const conditions = keywords.map(() => '(LOWER(key) LIKE ? OR LOWER(value) LIKE ?)');
     const params: string[] = [];
     for (const kw of keywords) {
@@ -184,14 +178,15 @@ export class MemoryStore {
     }
 
     const sql = `
-      SELECT *, (${keywords.map(() => `(CASE WHEN LOWER(key) LIKE ? THEN 1 ELSE 0 END + CASE WHEN LOWER(value) LIKE ? THEN 1 ELSE 0 END)`).join(' + ')}) AS relevance
+      SELECT *, (${keywords
+        .map(() => `(CASE WHEN LOWER(key) LIKE ? THEN 1 ELSE 0 END + CASE WHEN LOWER(value) LIKE ? THEN 1 ELSE 0 END)`)
+        .join(' + ')}) AS relevance
       FROM memories
       WHERE ${conditions.join(' OR ')}
       ORDER BY relevance DESC, last_accessed_at DESC
       LIMIT ?
     `;
 
-    // Add relevance scoring params
     const allParams = [...params, ...params, limit];
 
     try {
@@ -222,7 +217,99 @@ export class MemoryStore {
     }
   }
 
-  /** Log a conversation message */
+  /**
+   * Build a bounded, relevant context string for LLM calls
+   * without injecting the entire database.
+   */
+  getRelevantContext(query: string, maxItems = 6): string {
+    if (!this.db) return '';
+    const prefs = this.retrieve('preference', undefined, 4);
+    const matched = this.search(query, maxItems);
+    const seen = new Set<string>();
+    const combined: MemoryEntry[] = [];
+    for (const entry of [...prefs, ...matched]) {
+      if (!seen.has(entry.id)) {
+        seen.add(entry.id);
+        combined.push(entry);
+      }
+      if (combined.length >= maxItems) break;
+    }
+    return combined.map((m) => `- [${m.type}] ${m.key}: ${m.value}`).join('\n');
+  }
+
+  /** Load or initialize personality profile */
+  getPersonalityProfile(): PersonalityProfile {
+    if (!this.db) return { ...DEFAULT_PERSONALITY_PROFILE };
+    const row = this.db
+      .prepare(`SELECT user_name, formality, humor, verbosity, timezone FROM personality_profile WHERE id = 'default'`)
+      .get() as
+      | {
+          user_name: string;
+          formality: PersonalityProfile['formality'];
+          humor: PersonalityProfile['humor'];
+          verbosity: PersonalityProfile['verbosity'];
+          timezone: string;
+        }
+      | undefined;
+
+    if (!row) {
+      this.savePersonalityProfile(DEFAULT_PERSONALITY_PROFILE);
+      return { ...DEFAULT_PERSONALITY_PROFILE };
+    }
+
+    return {
+      userName: row.user_name,
+      formality: row.formality,
+      humor: row.humor,
+      verbosity: row.verbosity,
+      timezone: row.timezone,
+    };
+  }
+
+  /** Save personality profile */
+  savePersonalityProfile(profile: Partial<PersonalityProfile>): PersonalityProfile {
+    const current = this.db
+      ? (this.db
+          .prepare(`SELECT user_name, formality, humor, verbosity, timezone FROM personality_profile WHERE id = 'default'`)
+          .get() as
+          | {
+              user_name: string;
+              formality: PersonalityProfile['formality'];
+              humor: PersonalityProfile['humor'];
+              verbosity: PersonalityProfile['verbosity'];
+              timezone: string;
+            }
+          | undefined)
+      : undefined;
+
+    const merged: PersonalityProfile = {
+      userName: profile.userName ?? current?.user_name ?? DEFAULT_PERSONALITY_PROFILE.userName,
+      formality: profile.formality ?? current?.formality ?? DEFAULT_PERSONALITY_PROFILE.formality,
+      humor: profile.humor ?? current?.humor ?? DEFAULT_PERSONALITY_PROFILE.humor,
+      verbosity: profile.verbosity ?? current?.verbosity ?? DEFAULT_PERSONALITY_PROFILE.verbosity,
+      timezone: profile.timezone ?? current?.timezone ?? DEFAULT_PERSONALITY_PROFILE.timezone,
+    };
+
+    if (this.db) {
+      this.db
+        .prepare(
+          `INSERT INTO personality_profile (id, user_name, formality, humor, verbosity, timezone, updated_at)
+           VALUES ('default', ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(id) DO UPDATE SET
+             user_name = excluded.user_name,
+             formality = excluded.formality,
+             humor = excluded.humor,
+             verbosity = excluded.verbosity,
+             timezone = excluded.timezone,
+             updated_at = datetime('now')`
+        )
+        .run(merged.userName, merged.formality, merged.humor, merged.verbosity, merged.timezone);
+    }
+
+    return merged;
+  }
+
+  /** Log a conversation message (with secret redaction) */
   logConversation(
     role: 'user' | 'assistant' | 'system',
     content: string,
@@ -232,10 +319,9 @@ export class MemoryStore {
     if (!this.db) return;
 
     const id = uuidv4();
-    const stmt = this.db.prepare(
-      `INSERT INTO conversations (id, role, content, intent_action, session_id) VALUES (?, ?, ?, ?, ?)`
-    );
-    stmt.run(id, role, content, intentAction || null, sessionId || null);
+    this.db
+      .prepare(`INSERT INTO conversations (id, role, content, intent_action, session_id) VALUES (?, ?, ?, ?, ?)`)
+      .run(id, role, redactSecrets(content), intentAction || null, sessionId || null);
   }
 
   /** Log a task execution result */
@@ -252,14 +338,82 @@ export class MemoryStore {
     if (!this.db) return;
 
     const id = uuidv4();
-    const stmt = this.db.prepare(
-      `INSERT INTO task_log (id, intent_id, action, input, output, success, risk, executor, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    );
-    stmt.run(id, intentId, action, input, output, success ? 1 : 0, risk, executor, durationMs);
+    this.db
+      .prepare(
+        `INSERT INTO task_log (id, intent_id, action, input, output, success, risk, executor, duration_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(
+        id,
+        intentId,
+        action,
+        redactSecrets(input),
+        redactSecrets(output),
+        success ? 1 : 0,
+        risk,
+        executor,
+        durationMs
+      );
+  }
+
+  /** Record a security/tool audit log entry */
+  logAudit(
+    actor: string,
+    action: string,
+    resource: string,
+    risk: string,
+    success: boolean,
+    details = ''
+  ): void {
+    if (!this.db) return;
+    this.db
+      .prepare(
+        `INSERT INTO audit_logs (id, actor, action, resource, risk, success, details) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(uuidv4(), actor, action, resource, risk, success ? 1 : 0, redactSecrets(details));
+  }
+
+  /** Retrieve recent audit logs */
+  getAuditLogs(limit = 50): Array<{
+    id: string;
+    actor: string;
+    action: string;
+    resource: string;
+    risk: string;
+    success: boolean;
+    details: string;
+    createdAt: string;
+  }> {
+    if (!this.db) return [];
+    const rows = this.db
+      .prepare(`SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT ?`)
+      .all(limit) as Array<{
+      id: string;
+      actor: string;
+      action: string;
+      resource: string;
+      risk: string;
+      success: number;
+      details: string;
+      created_at: string;
+    }>;
+
+    return rows.map((r) => ({
+      id: r.id,
+      actor: r.actor,
+      action: r.action,
+      resource: r.resource,
+      risk: r.risk,
+      success: r.success === 1,
+      details: r.details,
+      createdAt: r.created_at,
+    }));
   }
 
   /** Get recent conversation history */
-  getRecentConversations(limit = 20, sessionId?: string): Array<{
+  getRecentConversations(
+    limit = 20,
+    sessionId?: string
+  ): Array<{
     role: string;
     content: string;
     action?: string;
@@ -285,12 +439,14 @@ export class MemoryStore {
       created_at: string;
     }>;
 
-    return rows.map((row) => ({
-      role: row.role,
-      content: row.content,
-      action: row.intent_action || undefined,
-      createdAt: row.created_at,
-    })).reverse();
+    return rows
+      .map((row) => ({
+        role: row.role,
+        content: row.content,
+        action: row.intent_action || undefined,
+        createdAt: row.created_at,
+      }))
+      .reverse();
   }
 
   /** Get memory statistics */
@@ -306,6 +462,19 @@ export class MemoryStore {
       totalTasks: taskCount.c,
       totalConversations: convCount.c,
     };
+  }
+
+  /** Create a hot SQLite backup to a target path */
+  async backupDatabase(destPath: string): Promise<string> {
+    if (!this.db) {
+      throw new Error('Database is not initialized.');
+    }
+    const dir = path.dirname(destPath);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    await this.db.backup(destPath);
+    return destPath;
   }
 
   /** Close the database connection */

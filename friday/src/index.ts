@@ -15,6 +15,8 @@ import { eventBus } from './shared/events';
 import { FridayServer } from './api/server';
 import { getClawBridge } from './orchestration/clawBridge';
 import { getMemoryStore } from './memory/store';
+import { getMonitoringEngine } from './services/monitoringEngine';
+import { getSchedulerService } from './services/schedulerService';
 
 const log = createLayerLogger('Core');
 
@@ -81,15 +83,21 @@ async function boot(): Promise<void> {
     log.warn('   FRIDAY will run in limited mode (no Claw-powered tasks)');
   }
 
-  // Step 4: Start the server
+  // Step 4: Recover persistent watchers & start scheduler
+  await getMonitoringEngine().recoverOnBoot();
+  await getSchedulerService().start();
+
+  // Step 5: Start the server
   const server = new FridayServer();
   await server.start();
 
-  // Step 5: Register shutdown handlers
+  // Step 6: Register shutdown handlers
   const shutdown = async (signal: string) => {
     log.info(`Received ${signal} — shutting down gracefully...`);
     eventBus.emitEvent('system:shutdown');
 
+    getMonitoringEngine().stopAll();
+    getSchedulerService().stop();
     bridge.cancelAll();
     await server.stop();
 

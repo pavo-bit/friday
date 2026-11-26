@@ -13,6 +13,7 @@ import { getStt } from '../../voice/stt';
 import { getTts } from '../../voice/tts';
 import { TaskResult } from '../../shared/types';
 import { toStructuredIntent } from '../../intelligence/systemPrompt';
+import { getAssistantBrain } from '../../orchestration/assistantBrain';
 
 const log = createLayerLogger('Routes');
 
@@ -26,7 +27,7 @@ export const fridayRoutes = Router();
  * and routes to the appropriate executor.
  */
 fridayRoutes.post('/run', async (req: Request, res: Response) => {
-  const { text, sessionId } = req.body as { text?: string; sessionId?: string };
+  const { text, sessionId, approved } = req.body as { text?: string; sessionId?: string; approved?: boolean };
 
   if (!text || typeof text !== 'string') {
     res.status(400).json({ error: 'Missing "text" field in request body' });
@@ -39,7 +40,7 @@ fridayRoutes.post('/run', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await processTextInput(text, sessionId);
+    const result = await processTextInput(text, sessionId, Boolean(approved));
     res.json(result);
   } catch (error) {
     log.error('Error processing request', { error: (error as Error).message });
@@ -161,53 +162,8 @@ fridayRoutes.get('/history', async (req: Request, res: Response) => {
  */
 export async function processTextInput(
   text: string,
-  sessionId?: string
-): Promise<TaskResult & { intent?: unknown }> {
-  const parser = getIntentParser();
-  const router = getTaskRouter();
-
-  // Step 1: Parse intent
-  const intent = await parser.parse(text);
-  log.info(`Intent: ${intent.action} (confidence: ${intent.confidence})`, {
-    intentId: intent.id,
-  });
-
-  // Step 2: Log user message to memory
-  try {
-    const memoryStore = await getMemoryStore();
-    memoryStore.logConversation('user', text, intent.action, sessionId);
-  } catch {
-    // Memory logging is best-effort
-  }
-
-  // Step 3: Route to executor
-  const result = await router.route(intent);
-
-  // Step 4: Log assistant response to memory
-  try {
-    const memoryStore = await getMemoryStore();
-    memoryStore.logConversation('assistant', result.output || result.error || '', intent.action, sessionId);
-    memoryStore.logTask(
-      intent.id,
-      intent.action,
-      text,
-      result.output,
-      result.success,
-      result.risk,
-      result.executor,
-      result.durationMs
-    );
-  } catch {
-    // Memory logging is best-effort
-  }
-
-  const structuredIntent = toStructuredIntent(
-    intent.action,
-    intent.params?.target || intent.params?.contact || intent.params?.app || '', // Infer target
-    intent.action.toLowerCase(),
-    intent.params?.message || intent.params?.query || intent.rawInput,           // Infer data
-    result.risk
-  );
-
-  return { ...result, intent: structuredIntent };
+  sessionId?: string,
+  approvedHighRisk = false
+): Promise<TaskResult & { intent?: unknown; toolResult?: unknown }> {
+  return getAssistantBrain().process(text, sessionId, approvedHighRisk);
 }

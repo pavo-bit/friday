@@ -53,7 +53,9 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb' }));       // Guard against payload abuse
 app.use(express.static(__dirname));
 
-const CLAW_EXE = path.join(__dirname, '..', 'rust', 'target', 'debug', 'claw.exe');
+const CLAW_RUST_EXE = path.join(__dirname, '..', 'rust', 'target', 'debug', 'claw.exe');
+const CLAW_JS = path.join(__dirname, '..', 'rust', 'target', 'debug', 'claw.js');
+const CLAW_EXE = fs.existsSync(CLAW_RUST_EXE) ? CLAW_RUST_EXE : CLAW_JS;
 const MAX_PROMPT_LENGTH = 32_000;               // Reject absurdly large prompts
 const EXECUTION_TIMEOUT_MS = 120_000;           // 2 minute hard limit per request
 
@@ -89,9 +91,13 @@ app.post('/api/chat', (req, res) => {
 
     // execFile passes ["prompt", <user_input>] directly to the binary.
     // No shell interpretation occurs — the prompt is a raw argv string.
+    const isJs = CLAW_EXE.endsWith('.js');
+    const bin = isJs ? process.execPath : CLAW_EXE;
+    const args = isJs ? [CLAW_EXE, 'prompt', prompt] : ['prompt', prompt];
+
     execFile(
-        CLAW_EXE,
-        ['prompt', prompt],
+        bin,
+        args,
         { env, timeout: EXECUTION_TIMEOUT_MS, maxBuffer: 10 * 1024 * 1024 },
         (error, stdout, stderr) => {
             let output = stdout || '';
@@ -168,3 +174,5 @@ app.listen(PORT, HOST, () => {
     console.log(`   Binary: ${CLAW_EXE}`);
     console.log(`   Binary exists: ${fs.existsSync(CLAW_EXE)}`);
 });
+
+module.exports = app;

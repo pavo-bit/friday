@@ -1,0 +1,210 @@
+// ============================================================
+// FRIDAY — SQLite Schema Migrations
+// Versioned, transactional schema evolution
+// ============================================================
+
+import type Database from 'better-sqlite3';
+import { createLayerLogger } from '../shared/logger';
+
+const log = createLayerLogger('Migrations');
+
+export interface Migration {
+  version: number;
+  name: string;
+  sql: string;
+}
+
+export const MIGRATIONS: Migration[] = [
+  {
+    version: 1,
+    name: 'initial_memory_and_logs',
+    sql: `
+      CREATE TABLE IF NOT EXISTS memories (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL CHECK(type IN ('conversation', 'task', 'preference', 'contact', 'fact')),
+        key TEXT NOT NULL,
+        value TEXT NOT NULL,
+        metadata TEXT DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        last_accessed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        access_count INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(type);
+      CREATE INDEX IF NOT EXISTS idx_memories_key ON memories(key);
+      CREATE INDEX IF NOT EXISTS idx_memories_created ON memories(created_at);
+
+      CREATE TABLE IF NOT EXISTS task_log (
+        id TEXT PRIMARY KEY,
+        intent_id TEXT NOT NULL,
+        action TEXT NOT NULL,
+        input TEXT NOT NULL,
+        output TEXT,
+        success INTEGER NOT NULL DEFAULT 0,
+        risk TEXT NOT NULL,
+        executor TEXT NOT NULL,
+        duration_ms INTEGER,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_log_created ON task_log(created_at);
+
+      CREATE TABLE IF NOT EXISTS conversations (
+        id TEXT PRIMARY KEY,
+        role TEXT NOT NULL CHECK(role IN ('user', 'assistant', 'system')),
+        content TEXT NOT NULL,
+        intent_action TEXT,
+        session_id TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_conversations_session ON conversations(session_id);
+      CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
+    `,
+  },
+  {
+    version: 2,
+    name: 'personality_monitoring_scheduler_locations_security',
+    sql: `
+      CREATE TABLE IF NOT EXISTS personality_profile (
+        id TEXT PRIMARY KEY DEFAULT 'default',
+        user_name TEXT NOT NULL DEFAULT 'User',
+        formality TEXT NOT NULL DEFAULT 'balanced' CHECK(formality IN ('formal', 'balanced', 'casual')),
+        humor TEXT NOT NULL DEFAULT 'subtle' CHECK(humor IN ('none', 'subtle', 'playful')),
+        verbosity TEXT NOT NULL DEFAULT 'concise' CHECK(verbosity IN ('concise', 'balanced', 'detailed')),
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS locations (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        radius_meters INTEGER NOT NULL DEFAULT 150,
+        address TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS reminders (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        notes TEXT DEFAULT '',
+        due_at TEXT,
+        timezone TEXT NOT NULL DEFAULT 'UTC',
+        recurrence TEXT DEFAULT 'none' CHECK(recurrence IN ('none', 'daily', 'weekly', 'monthly')),
+        weekday INTEGER,
+        location_id TEXT REFERENCES locations(id) ON DELETE SET NULL,
+        trigger_on TEXT DEFAULT 'time' CHECK(trigger_on IN ('time', 'enter', 'exit')),
+        status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'triggered', 'completed', 'cancelled')),
+        is_alarm INTEGER NOT NULL DEFAULT 0,
+        last_triggered_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_reminders_status ON reminders(status);
+      CREATE INDEX IF NOT EXISTS idx_reminders_due ON reminders(due_at);
+
+      CREATE TABLE IF NOT EXISTS watchers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        target_url TEXT NOT NULL,
+        method TEXT NOT NULL DEFAULT 'http_health' CHECK(method IN ('http_health', 'prometheus', 'grafana', 'json_api', 'postgres', 'redis')),
+        interval_ms INTEGER NOT NULL DEFAULT 60000,
+        timeout_ms INTEGER NOT NULL DEFAULT 5000,
+        failure_threshold INTEGER NOT NULL DEFAULT 2,
+        metric_query TEXT DEFAULT '',
+        metric_threshold REAL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'stopped')),
+        health TEXT NOT NULL DEFAULT 'unknown' CHECK(health IN ('healthy', 'degraded', 'offline', 'unknown')),
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_check_at TEXT,
+        last_success_at TEXT,
+        last_failure_at TEXT,
+        last_error TEXT,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_watchers_status ON watchers(status);
+
+      CREATE TABLE IF NOT EXISTS monitoring_history (
+        id TEXT PRIMARY KEY,
+        watcher_id TEXT NOT NULL REFERENCES watchers(id) ON DELETE CASCADE,
+        status TEXT NOT NULL CHECK(status IN ('healthy', 'degraded', 'offline')),
+        status_code INTEGER,
+        latency_ms INTEGER,
+        message TEXT DEFAULT '',
+        alert_sent INTEGER NOT NULL DEFAULT 0,
+        checked_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_monitoring_history_watcher ON monitoring_history(watcher_id);
+      CREATE INDEX IF NOT EXISTS idx_monitoring_history_checked ON monitoring_history(checked_at);
+
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        severity TEXT NOT NULL DEFAULT 'info' CHECK(severity IN ('info', 'warning', 'critical')),
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'system',
+        dedupe_key TEXT,
+        is_read INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_notifications_read ON notifications(is_read);
+      CREATE INDEX IF NOT EXISTS idx_notifications_created ON notifications(created_at);
+
+      CREATE TABLE IF NOT EXISTS devices (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        platform TEXT NOT NULL DEFAULT 'android',
+        token_hash TEXT NOT NULL,
+        push_token TEXT,
+        location_opt_in INTEGER NOT NULL DEFAULT 0,
+        last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id TEXT PRIMARY KEY,
+        actor TEXT NOT NULL DEFAULT 'user',
+        action TEXT NOT NULL,
+        resource TEXT DEFAULT '',
+        risk TEXT NOT NULL DEFAULT 'low',
+        success INTEGER NOT NULL DEFAULT 1,
+        details TEXT DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
+    `,
+  },
+];
+
+/**
+ * Run all pending schema migrations inside transactions.
+ */
+export function runMigrations(db: Database.Database): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      version INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+  `);
+
+  const appliedRows = db.prepare('SELECT version FROM schema_migrations').all() as Array<{ version: number }>;
+  const applied = new Set(appliedRows.map((r) => r.version));
+
+  for (const migration of MIGRATIONS) {
+    if (applied.has(migration.version)) continue;
+
+    const applyTx = db.transaction(() => {
+      db.exec(migration.sql);
+      db.prepare('INSERT INTO schema_migrations (version, name) VALUES (?, ?)').run(
+        migration.version,
+        migration.name
+      );
+    });
+
+    applyTx();
+    log.info(`Applied migration v${migration.version}: ${migration.name}`);
+  }
+}
