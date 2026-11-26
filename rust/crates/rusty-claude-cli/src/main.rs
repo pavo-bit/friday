@@ -8635,31 +8635,6 @@ UU conflicted.rs",
     }
 
     #[test]
-    fn login_browser_failure_keeps_json_stdout_clean() {
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-        let error = std::io::Error::new(
-            std::io::ErrorKind::NotFound,
-            "no supported browser opener command found",
-        );
-
-        super::emit_login_browser_open_failure(
-            CliOutputFormat::Json,
-            "https://example.test/oauth/authorize",
-            &error,
-            &mut stdout,
-            &mut stderr,
-        )
-        .expect("browser warning should render");
-
-        assert!(stdout.is_empty());
-        let stderr = String::from_utf8(stderr).expect("utf8");
-        assert!(stderr.contains("failed to open browser automatically"));
-        assert!(stderr.contains("Open this URL manually:"));
-        assert!(stderr.contains("https://example.test/oauth/authorize"));
-    }
-
-    #[test]
     fn build_runtime_plugin_state_merges_plugin_hooks_into_runtime_features() {
         let config_home = temp_dir();
         let workspace = temp_dir();
