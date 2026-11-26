@@ -48,8 +48,8 @@ use runtime::{
     AssistantEvent, CompactionConfig, ConfigLoader, ConfigSource, ContentBlock,
     ConversationMessage, ConversationRuntime, McpServerManager, McpTool, MessageRole, ModelPricing,
     OAuthAuthorizationRequest, OAuthConfig, OAuthTokenExchangeRequest, PermissionMode,
-    PermissionPolicy, ProjectContext, ResolvedPermissionMode, RuntimeError,
-    Session, TokenUsage, ToolError, ToolExecutor, UsageTracker,
+    PermissionPolicy, ProjectContext, ResolvedPermissionMode, RuntimeError, Session, TokenUsage,
+    ToolError, ToolExecutor, UsageTracker,
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -5673,8 +5673,7 @@ impl ApiClient for OllamaRuntimeClient {
                 .map_err(|error| {
                     RuntimeError::new(format_user_visible_api_error(&self.session_id, &error))
                 })?;
-            let mut events = response_to_events(response, out)?;
-            
+            let events = response_to_events(response, out)?;
             Ok(events)
         })
     }
@@ -5719,9 +5718,15 @@ fn format_context_window_blocked_error(session_id: &str, error: &api::ApiError) 
             context_window_tokens,
         } => {
             lines.push(format!("  Model            {model}"));
-            lines.push(format!("  Input estimate   ~{estimated_input_tokens} tokens (heuristic)"));
-            lines.push(format!("  Requested output {requested_output_tokens} tokens"));
-            lines.push(format!("  Total estimate   ~{estimated_total_tokens} tokens (heuristic)"));
+            lines.push(format!(
+                "  Input estimate   ~{estimated_input_tokens} tokens (heuristic)"
+            ));
+            lines.push(format!(
+                "  Requested output {requested_output_tokens} tokens"
+            ));
+            lines.push(format!(
+                "  Total estimate   ~{estimated_total_tokens} tokens (heuristic)"
+            ));
             lines.push(format!("  Context window   {context_window_tokens} tokens"));
         }
         api::ApiError::Api { message, body, .. } => {
@@ -6434,7 +6439,6 @@ fn response_to_events(
     Ok(events)
 }
 
-
 struct CliToolExecutor {
     renderer: TerminalRenderer,
     emit_output: bool,
@@ -6564,7 +6568,6 @@ impl ToolExecutor for CliToolExecutor {
         }
     }
 }
-
 
 fn permission_policy(
     mode: PermissionMode,
