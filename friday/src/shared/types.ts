@@ -184,8 +184,8 @@ export interface FridayConfig {
   requireHighRiskApproval: boolean;
 
   // Voice
-  sttEngine: 'whisper_api' | 'whisper_local' | 'none';
-  ttsEngine: 'openai' | 'edge' | 'none';
+  sttEngine: 'none';
+  ttsEngine: 'edge' | 'none';
   wakeWord: string;
 
   // Memory

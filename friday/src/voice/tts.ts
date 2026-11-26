@@ -1,6 +1,6 @@
 // ============================================================
 // FRIDAY — Voice Layer: Text-to-Speech
-// Supports OpenAI TTS and Edge TTS (free)
+// Server-side Edge TTS is optional; the dashboard uses browser SpeechSynthesis by default.
 // ============================================================
 
 import { execFile } from 'child_process';
@@ -15,9 +15,8 @@ const log = createLayerLogger('TTS');
  * TextToSpeech — converts text responses to audio.
  *
  * Supports:
- * - OpenAI TTS API (premium, natural voice)
- * - Edge TTS via edge-tts CLI (free, no API key needed)
- * - Disabled mode (text-only interaction)
+ * - Edge TTS via edge-tts CLI (free, online service)
+ * - Disabled mode (dashboard browser speech is used instead)
  */
 export class TextToSpeech {
   private engine: string;
