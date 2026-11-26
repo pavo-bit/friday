@@ -19,10 +19,11 @@ cargo build --workspace
 ## Prerequisites
 
 - Rust toolchain with `cargo`
-- One of:
-  - `ANTHROPIC_API_KEY` for direct API access
-  - `claw login` for OAuth-based auth
-- Optional: `ANTHROPIC_BASE_URL` when targeting a proxy or local service
+- [Ollama](https://ollama.com/download) installed and running
+- A local model pulled with `ollama pull qwen3:4b`
+- No Anthropic or OpenAI API key is required for the FRIDAY local runtime
+
+Environment variables: `OLLAMA_BASE_URL` (default `http://127.0.0.1:11434/v1`) and `OLLAMA_MODEL` (default `qwen3:4b`).
 
 ## Install / build the workspace
 
@@ -95,19 +96,16 @@ Model aliases currently supported by the CLI:
 
 ## Authentication
 
-### API key
+### Local Ollama
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
+```powershell
+ollama serve
+ollama pull qwen3:4b
+$env:OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+$env:OLLAMA_MODEL = "qwen3:4b"
 ```
 
-### OAuth
-
-```bash
-cd rust
-./target/debug/claw login
-./target/debug/claw logout
-```
+FRIDAY's runtime calls the local Ollama OpenAI-compatible endpoint without a bearer token.
 
 ## Common operational commands
 

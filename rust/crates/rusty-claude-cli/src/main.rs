@@ -2536,7 +2536,7 @@ struct BuiltRuntime {
 
 impl BuiltRuntime {
     fn new(
-        runtime: ConversationRuntime<AnthropicRuntimeClient, CliToolExecutor>,
+        runtime: ConversationRuntime<OllamaRuntimeClient, CliToolExecutor>,
         plugin_registry: PluginRegistry,
         mcp_state: Option<Arc<Mutex<RuntimeMcpState>>>,
     ) -> Self {
@@ -2581,7 +2581,7 @@ impl BuiltRuntime {
 }
 
 impl Deref for BuiltRuntime {
-    type Target = ConversationRuntime<AnthropicRuntimeClient, CliToolExecutor>;
+    type Target = ConversationRuntime<OllamaRuntimeClient, CliToolExecutor>;
 
     fn deref(&self) -> &Self::Target {
         self.runtime
@@ -5463,7 +5463,7 @@ fn build_runtime_with_plugin_state(
         .map_err(std::io::Error::other)?;
     let mut runtime = ConversationRuntime::new_with_features(
         session,
-        AnthropicRuntimeClient::new(
+        OllamaRuntimeClient::new(
             session_id,
             model,
             enable_tools,
@@ -5570,7 +5570,7 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
     }
 }
 
-struct AnthropicRuntimeClient {
+struct OllamaRuntimeClient {
     runtime: tokio::runtime::Runtime,
     client: OpenAiCompatClient,
     session_id: String,
@@ -5582,7 +5582,7 @@ struct AnthropicRuntimeClient {
     progress_reporter: Option<InternalPromptProgressReporter>,
 }
 
-impl AnthropicRuntimeClient {
+impl OllamaRuntimeClient {
     fn new(
         session_id: &str,
         model: String,
@@ -5632,7 +5632,7 @@ fn load_runtime_oauth_config_for(cwd: &Path) -> Result<Option<OAuthConfig>, api:
     Ok(config.oauth().cloned())
 }
 
-impl ApiClient for AnthropicRuntimeClient {
+impl ApiClient for OllamaRuntimeClient {
     #[allow(clippy::too_many_lines)]
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         if let Some(progress_reporter) = &self.progress_reporter {

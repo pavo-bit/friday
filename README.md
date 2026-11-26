@@ -52,14 +52,18 @@ cargo build --workspace
 ./target/debug/claw prompt "summarize this repository"
 ```
 
-Authenticate with either an API key or the built-in OAuth flow:
+Run with local Ollama (no paid API key required):
 
-```bash
-export ANTHROPIC_API_KEY="sk-ant-..."
-# or
+```powershell
+ollama pull qwen3:4b
+$env:OLLAMA_BASE_URL = "http://127.0.0.1:11434/v1"
+$env:OLLAMA_MODEL = "qwen3:4b"
 cd rust
-./target/debug/claw login
+cargo build -p rusty-claude-cli
+.\\target\\debug\\claw.exe prompt "Say hello"
 ```
+
+FRIDAY's default Rust agent path uses Ollama on localhost. The upstream CLI retains legacy OAuth utilities that are not needed for the FRIDAY local path.
 
 Run the workspace test suite:
 

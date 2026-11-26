@@ -78,13 +78,6 @@ app.post('/api/chat', (req, res) => {
 
             output = stripAnsi(output);
 
-            if (output.includes('missing Anthropic credentials')) {
-                output =
-                    "I'm sorry, but I can't reach the AI network right now! " +
-                    'It seems my API Key is missing. Please create a .env file ' +
-                    'in the web-ui/ folder with ANTHROPIC_API_KEY=sk-... or restart ' +
-                    'the server in a terminal where the key is set. 😊';
-            }
 
             res.json({ output: output.trim() });
         }
@@ -94,11 +87,27 @@ app.post('/api/chat', (req, res) => {
 // ---------------------------------------------------------------------------
 // GET /api/health  — Quick healthcheck for monitoring
 // ---------------------------------------------------------------------------
-app.get('/api/health', (_req, res) => {
+app.get('/api/health', async (_req, res) => {
     const clawExists = fs.existsSync(CLAW_EXE);
+    const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\\/$/, '');
+    const model = process.env.OLLAMA_MODEL || 'qwen3:4b';
+    let ollamaOnline = false;
+    let models = [];
+    try {
+        const response = await fetch(ollamaBase + '/api/tags', { signal: AbortSignal.timeout(2500) });
+        if (response.ok) {
+            const payload = await response.json();
+            models = (payload.models || []).map(item => item.name);
+            ollamaOnline = true;
+        }
+    } catch (_) { /* Ollama is optional until started. */ }
     res.json({
-        status: clawExists ? 'ok' : 'degraded',
+        status: clawExists && ollamaOnline ? 'ok' : 'degraded',
         claw_binary: clawExists,
+        ollama_online: ollamaOnline,
+        ollama_url: ollamaBase.replace(/^http:\/\//, ''),
+        model,
+        models,
         uptime_seconds: Math.floor(process.uptime()),
     });
 });
@@ -133,8 +142,9 @@ app.get('/api/sessions', (_req, res) => {
 // Start Server
 // ---------------------------------------------------------------------------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`🚀 Claw UI running on http://localhost:${PORT}`);
+const HOST = process.env.HOST || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+    console.log(`🚀 FRIDAY dashboard running on http://${HOST}:${PORT}`);
     console.log(`   Binary: ${CLAW_EXE}`);
     console.log(`   Binary exists: ${fs.existsSync(CLAW_EXE)}`);
 });

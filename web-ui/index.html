@@ -1,60 +1,8 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Claw Chat</title>
-    <link rel="stylesheet" href="style.css">
-    <link href="https://fonts.googleapis.com/css2?family=SF+Pro+Display:wght@400;500;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
-</head>
-<body>
-    <div class="chat-app">
-        <!-- Header -->
-        <header class="chat-header">
-            <div class="profile-section">
-                <div class="avatar-container">
-                    <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Claw" alt="Claw Agent" class="avatar">
-                    <span class="online-dot"></span>
-                </div>
-                <div class="header-info">
-                    <h2>Claw Assistant</h2>
-                    <span class="status">Active now</span>
-                </div>
-            </div>
-            <div class="header-actions">
-                <button class="icon-btn">⋮</button>
-            </div>
-        </header>
-
-        <!-- Chat Area -->
-        <main class="chat-window" id="chatContainer">
-            <div class="timestamp">Today 9:41 AM</div>
-            
-            <div class="messages" id="messagesArea">
-                <div class="message-row agent">
-                    <img src="https://api.dicebear.com/7.x/bottts/svg?seed=Claw" alt="Agent" class="message-avatar">
-                    <div class="bubble agent-bubble">
-                        Hey there! 👋 I'm Claw, your AI coding assistant. How can I help you today?
-                    </div>
-                </div>
-            </div>
-        </main>
-
-        <!-- Input Area -->
-        <footer class="chat-footer">
-            <form id="chatForm">
-                <div class="input-container">
-                    <button type="button" class="attach-btn">+</button>
-                    <input type="text" id="userInput" placeholder="Message..." autocomplete="off" required>
-                    <button type="submit" id="sendBtn" class="send-btn">
-                        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor">
-                            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/>
-                        </svg>
-                    </button>
-                </div>
-            </form>
-        </footer>
-    </div>
-    <script src="script.js"></script>
-</body>
-</html>
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#090d16"><title>FRIDAY — Personal AI Command Center</title><link rel="preconnect" href="https://fonts.googleapis.com"><link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet"><link rel="stylesheet" href="style.css"></head>
+<body><div class="app-shell"><aside class="sidebar"><div class="brand"><div class="brand-mark"><i></i><i></i><i></i></div><div><b>FRIDAY</b><small>PERSONAL INTELLIGENCE</small></div></div><p class="nav-label">WORKSPACE</p><button class="nav-item active">⌂ &nbsp; Command center</button><button class="nav-item" id="focusChat">◉ &nbsp; Conversation</button><div class="sidebar-bottom"><div class="local-card"><span class="local-indicator"></span><div><b>Local-first AI</b><small>Ollama · no API key</small></div></div><div class="profile"><span class="profile-avatar">F</span><div><b>FRIDAY Core</b><small>Personal assistant</small></div></div></div></aside>
+<main class="main"><header class="topbar"><div><p class="eyebrow">PERSONAL AI SYSTEM <span class="live-dot"></span></p><h1>Command center</h1></div><div class="top-actions"><time id="clock">--:--</time><button id="refreshStatus" class="icon-button">↻</button><span class="avatar-small">F</span></div></header>
+<section class="welcome-row"><div><p class="eyebrow">YOUR ASSISTANT IS READY</p><h2>Good to see you<span class="accent">.</span></h2><p class="subheading">Think, research, build and act — from one place.</p></div><div class="core-visual"><div class="core-ring"></div><div class="core-ring inner"></div><div class="core-center">F</div><span class="orbit"></span></div></section>
+<section class="metrics"><article class="metric-card"><div class="metric-top">AI ENGINE <span>⌘</span></div><b id="engineStatus">Checking…</b><small id="engineDetail">Connecting to local Ollama</small><div class="metric-foot"><em id="enginePill">CHECKING</em><span>LOCAL INFERENCE</span></div></article><article class="metric-card"><div class="metric-top">ACTIVE MODEL <span>◈</span></div><b id="modelName">qwen3:4b</b><small>Configured local model</small><div class="metric-foot"><em>NO API KEY</em><span>PRIVATE BY DEFAULT</span></div></article><article class="metric-card"><div class="metric-top">VOICE SYSTEM <span>♫</span></div><b id="voiceStatus">Browser voice</b><small id="voiceDetail">Mic input · spoken replies</small><div class="metric-foot"><em id="voicePill">READY TO TEST</em><span>NO PAID API</span></div></article><article class="metric-card"><div class="metric-top">CLAW RUNTIME <span>⌁</span></div><b id="clawStatus">Checking…</b><small id="clawDetail">Agent runtime availability</small><div class="metric-foot"><em id="clawPill">CHECKING</em><span>TOOL EXECUTION</span></div></article></section>
+<section class="workspace-grid"><section class="chat-panel" id="conversation"><div class="panel-header"><div><p class="eyebrow">INTERFACE</p><h3>Talk to FRIDAY</h3></div><span class="session-tag"><span class="live-dot"></span> LIVE SESSION</span></div><div class="conversation" id="chatContainer"><div class="day-divider">SESSION STARTED</div><div class="message assistant"><span class="message-mark">F</span><div class="message-body"><div class="message-meta">FRIDAY · JUST NOW</div><div class="bubble">Systems online. I'm ready when you are. What would you like me to work on?</div></div></div></div><div class="composer-wrap"><p id="voiceState" class="voice-state">Voice ready · click the microphone to speak</p><form id="chatForm" class="composer"><button type="button" id="micButton" class="tool-button" title="Start voice input">⌁</button><input id="userInput" placeholder="Message FRIDAY or use your voice…" autocomplete="off" required><button type="button" id="speakToggle" class="tool-button enabled" title="Toggle spoken replies">♫</button><button type="submit" id="sendBtn" class="send-button">↑</button></form><div class="composer-foot"><span>ENTER TO SEND</span><span>VOICE INPUT + SPEECH OUTPUT</span><span>LOCAL MODEL · OLLAMA</span></div></div></section>
+<aside class="right-column"><section class="side-panel"><div class="panel-header"><div><p class="eyebrow">SYSTEM</p><h3>Runtime status</h3></div><span class="pulse-mark">◎</span></div><div class="system-row"><span>◉</span><div><b>Ollama server</b><small id="ollamaAddress">127.0.0.1:11434</small></div><i id="ollamaDot"></i></div><div class="system-row"><span>⌘</span><div><b>Claw agent</b><small id="runtimeAddress">Rust runtime</small></div><i id="runtimeDot"></i></div><div class="system-row"><span>♫</span><div><b>Voice interface</b><small>Browser speech APIs</small></div><i class="good"></i></div></section><section class="side-panel"><div class="panel-header"><div><p class="eyebrow">SHORTCUTS</p><h3>Quick prompts</h3></div></div><button class="quick-prompt" data-prompt="Give me a concise system status report.">◈ <span><b>System status</b><small>Check the current runtime</small></span><strong>↗</strong></button><button class="quick-prompt" data-prompt="Help me research this topic and summarize reliable sources: ">⌕ <span><b>Research a topic</b><small>Explore and summarize</small></span><strong>↗</strong></button><button class="quick-prompt" data-prompt="Help me plan and break down my next task.">✳ <span><b>Plan a task</b><small>Turn an idea into steps</small></span><strong>↗</strong></button></section><section class="privacy-note"><span>⬡</span><div><b>Your local AI workspace</b><p>Prompts are sent to your local Ollama server. No paid model API is configured.</p></div></section></aside></section><footer class="footer"><span>FRIDAY · PERSONAL INTELLIGENCE SYSTEM</span><span>BUILT FOR YOUR WORKFLOW</span></footer></main></div><script src="script.js"></script></body></html>
