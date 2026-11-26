@@ -76,7 +76,7 @@ cd rust
 
 ```bash
 cd rust
-./target/debug/claw --model sonnet prompt "review this diff"
+./target/debug/claw --model qwen3:4b prompt "review this diff"
 ./target/debug/claw --permission-mode read-only prompt "summarize Cargo.toml"
 ./target/debug/claw --permission-mode workspace-write prompt "update README.md"
 ./target/debug/claw --allowedTools read,glob "inspect the runtime crate"
@@ -88,7 +88,7 @@ Supported permission modes:
 - `workspace-write`
 - `danger-full-access`
 
-FRIDAY defaults to `qwen3:4b`. Set `OLLAMA_MODEL` or pass `--model` to select another locally installed model.
+FRIDAY defaults to `qwen3:4b`. Set `OLLAMA_MODEL` or pass `--model` to select another model already installed in Ollama. Provider-specific legacy aliases are not part of the FRIDAY local runtime.
 
 ## Authentication
 

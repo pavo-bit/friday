@@ -1,5 +1,4 @@
 const express = require('express');
-const cors = require('cors');
 const { execFile } = require('child_process');
 const path = require('path');
 const fs = require('fs');
@@ -27,7 +26,30 @@ if (fs.existsSync(envPath)) {
 // Express App Setup
 // ---------------------------------------------------------------------------
 const app = express();
-app.use(cors());
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || '127.0.0.1';
+
+// This local agent can execute tools on the host. Do not expose its API to
+// arbitrary websites or DNS-rebinding hostnames.
+app.use((req, res, next) => {
+    const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1', HOST]);
+    if (!allowedHosts.has(req.hostname)) {
+        return res.status(403).json({ error: 'FRIDAY dashboard is restricted to localhost.' });
+    }
+    const origin = req.get('origin');
+    if (origin) {
+        let originHost;
+        try {
+            originHost = new URL(origin).hostname;
+        } catch {
+            return res.status(403).json({ error: 'Invalid request origin.' });
+        }
+        if (originHost !== req.hostname || !allowedHosts.has(originHost)) {
+            return res.status(403).json({ error: 'Cross-origin requests are not allowed.' });
+        }
+    }
+    next();
+});
 app.use(express.json({ limit: '1mb' }));       // Guard against payload abuse
 app.use(express.static(__dirname));
 
@@ -141,8 +163,6 @@ app.get('/api/sessions', (_req, res) => {
 // ---------------------------------------------------------------------------
 // Start Server
 // ---------------------------------------------------------------------------
-const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || '127.0.0.1';
 app.listen(PORT, HOST, () => {
     console.log(`🚀 FRIDAY dashboard running on http://${HOST}:${PORT}`);
     console.log(`   Binary: ${CLAW_EXE}`);
