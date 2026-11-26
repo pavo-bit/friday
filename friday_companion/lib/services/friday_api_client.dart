@@ -44,23 +44,33 @@ class FridayApiClient {
     try {
       late http.Response res;
       if (method == 'GET') {
-        res = await _http.get(uri, headers: _headers()).timeout(const Duration(seconds: 8));
+        res = await _http
+            .get(uri, headers: _headers())
+            .timeout(const Duration(seconds: 8));
       } else if (method == 'POST') {
         res = await _http
-            .post(uri, headers: _headers(), body: body != null ? jsonEncode(body) : null)
+            .post(uri,
+                headers: _headers(),
+                body: body != null ? jsonEncode(body) : null)
             .timeout(const Duration(seconds: 15));
       } else if (method == 'PUT') {
         res = await _http
-            .put(uri, headers: _headers(), body: body != null ? jsonEncode(body) : null)
+            .put(uri,
+                headers: _headers(),
+                body: body != null ? jsonEncode(body) : null)
             .timeout(const Duration(seconds: 10));
       } else if (method == 'DELETE') {
-        res = await _http.delete(uri, headers: _headers()).timeout(const Duration(seconds: 8));
+        res = await _http
+            .delete(uri, headers: _headers())
+            .timeout(const Duration(seconds: 8));
       } else {
         throw FridayApiException('Unsupported HTTP method: $method');
       }
 
       brainOnline = true;
-      final decoded = res.body.isNotEmpty ? jsonDecode(res.body) as Map<String, dynamic> : <String, dynamic>{};
+      final decoded = res.body.isNotEmpty
+          ? jsonDecode(res.body) as Map<String, dynamic>
+          : <String, dynamic>{};
       if (res.statusCode >= 400) {
         throw FridayApiException(
           decoded['error']?.toString() ?? 'Request failed (${res.statusCode})',
@@ -113,7 +123,9 @@ class FridayApiClient {
   Future<List<WatcherItem>> listWatchers() async {
     final res = await _request('GET', '/friday/watchers');
     final list = res['watchers'] as List<dynamic>? ?? [];
-    return list.map((e) => WatcherItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => WatcherItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> controlWatcher(String id, String action) async {
@@ -123,10 +135,13 @@ class FridayApiClient {
   Future<List<ReminderItem>> listReminders() async {
     final res = await _request('GET', '/friday/reminders');
     final list = res['reminders'] as List<dynamic>? ?? [];
-    return list.map((e) => ReminderItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => ReminderItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
-  Future<void> createReminder({required String title, String? dueAt, bool isAlarm = false}) async {
+  Future<void> createReminder(
+      {required String title, String? dueAt, bool isAlarm = false}) async {
     await _request('POST', '/friday/reminders', body: {
       'title': title,
       'dueAt': dueAt,
@@ -137,13 +152,17 @@ class FridayApiClient {
   Future<List<NotificationItem>> listNotifications() async {
     final res = await _request('GET', '/friday/notifications');
     final list = res['notifications'] as List<dynamic>? ?? [];
-    return list.map((e) => NotificationItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => NotificationItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<List<SavedLocationItem>> listLocations() async {
     final res = await _request('GET', '/friday/locations');
     final list = res['locations'] as List<dynamic>? ?? [];
-    return list.map((e) => SavedLocationItem.fromJson(e as Map<String, dynamic>)).toList();
+    return list
+        .map((e) => SavedLocationItem.fromJson(e as Map<String, dynamic>))
+        .toList();
   }
 
   Future<void> saveLocation({
@@ -162,7 +181,8 @@ class FridayApiClient {
 
   Future<void> setLocationOptIn(bool optIn) async {
     if (deviceId == null) return;
-    await _request('POST', '/friday/auth/devices/$deviceId/location-opt-in', body: {'optIn': optIn});
+    await _request('POST', '/friday/auth/devices/$deviceId/location-opt-in',
+        body: {'optIn': optIn});
   }
 
   Future<Map<String, dynamic>> triggerGeofence({
@@ -170,7 +190,8 @@ class FridayApiClient {
     required String eventType,
   }) async {
     if (deviceId == null) {
-      throw FridayApiException('Device must be paired before sending geofence events.');
+      throw FridayApiException(
+          'Device must be paired before sending geofence events.');
     }
     return _request('POST', '/friday/locations/geofence', body: {
       'deviceId': deviceId,

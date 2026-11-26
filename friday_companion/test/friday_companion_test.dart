@@ -19,18 +19,21 @@ void main() {
       );
     });
 
-    final client = FridayApiClient(baseUrl: 'http://127.0.0.1:3141', httpClient: mockHttp);
+    final client =
+        FridayApiClient(baseUrl: 'http://127.0.0.1:3141', httpClient: mockHttp);
     await client.pairDevice(code: '123456', deviceName: 'Test Phone');
     expect(client.bearerToken, 'frd_test_token_123');
     expect(client.deviceId, 'dev-1');
   });
 
-  test('Offline server marks brainOnline false and throws clear message', () async {
+  test('Offline server marks brainOnline false and throws clear message',
+      () async {
     final mockHttp = MockClient((_) async {
       throw Exception('SocketException: Connection refused');
     });
 
-    final client = FridayApiClient(baseUrl: 'http://127.0.0.1:3141', httpClient: mockHttp);
+    final client =
+        FridayApiClient(baseUrl: 'http://127.0.0.1:3141', httpClient: mockHttp);
     expect(
       () => client.sendMessage('hello'),
       throwsA(
@@ -42,7 +45,8 @@ void main() {
     expect(client.brainOnline, false);
   });
 
-  test('GeofenceEvaluator detects inside vs outside coordinates accurately', () {
+  test('GeofenceEvaluator detects inside vs outside coordinates accurately',
+      () {
     final college = SavedLocationItem(
       id: 'loc-1',
       name: 'college',
@@ -52,6 +56,7 @@ void main() {
     );
 
     expect(GeofenceEvaluator.isInsideGeofence(12.9716, 77.5946, college), true);
-    expect(GeofenceEvaluator.isInsideGeofence(13.0500, 77.5946, college), false);
+    expect(
+        GeofenceEvaluator.isInsideGeofence(13.0500, 77.5946, college), false);
   });
 }

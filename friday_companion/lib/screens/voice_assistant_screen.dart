@@ -27,7 +27,8 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
 
     final ok = await _stt.initialize();
     if (!ok) {
-      setState(() => _transcript = 'Microphone permission or speech recognition is unavailable.');
+      setState(() => _transcript =
+          'Microphone permission or speech recognition is unavailable.');
       return;
     }
 
@@ -56,17 +57,25 @@ class _VoiceAssistantScreenState extends State<VoiceAssistantScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(_transcript, textAlign: TextAlign.center, style: const TextStyle(fontSize: 16)),
+            Text(_transcript,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 16)),
             const SizedBox(height: 20),
-            if (_reply.isNotEmpty) Text(_reply, textAlign: TextAlign.center, style: const TextStyle(color: Colors.lightBlueAccent)),
+            if (_reply.isNotEmpty)
+              Text(_reply,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.lightBlueAccent)),
             const SizedBox(height: 32),
             FloatingActionButton.large(
               onPressed: _toggleListen,
-              backgroundColor: _listening ? Colors.redAccent : Colors.blueAccent,
+              backgroundColor:
+                  _listening ? Colors.redAccent : Colors.blueAccent,
               child: Icon(_listening ? Icons.stop : Icons.mic),
             ),
             const SizedBox(height: 16),
-            TextButton(onPressed: () => _tts.stop(), child: const Text('Stop Speaking')),
+            TextButton(
+                onPressed: () => _tts.stop(),
+                child: const Text('Stop Speaking')),
           ],
         ),
       ),

@@ -13,7 +13,10 @@ class GeofenceEvaluator {
     final dLat = _deg2rad(lat2 - lat1);
     final dLon = _deg2rad(lon2 - lon1);
     final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_deg2rad(lat1)) * cos(_deg2rad(lat2)) * sin(dLon / 2) * sin(dLon / 2);
+        cos(_deg2rad(lat1)) *
+            cos(_deg2rad(lat2)) *
+            sin(dLon / 2) *
+            sin(dLon / 2);
     final c = 2 * atan2(sqrt(a), sqrt(1 - a));
     return earthRadius * c;
   }
@@ -26,6 +29,7 @@ class GeofenceEvaluator {
     double lon,
     SavedLocationItem location,
   ) {
-    return distanceMeters(lat, lon, location.latitude, location.longitude) <= location.radiusMeters;
+    return distanceMeters(lat, lon, location.latitude, location.longitude) <=
+        location.radiusMeters;
   }
 }

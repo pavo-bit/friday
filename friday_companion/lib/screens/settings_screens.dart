@@ -10,7 +10,8 @@ class DeviceSettingsScreen extends StatefulWidget {
 }
 
 class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
-  late final TextEditingController _urlCtrl = TextEditingController(text: widget.client.baseUrl);
+  late final TextEditingController _urlCtrl =
+      TextEditingController(text: widget.client.baseUrl);
   String _status = '';
 
   @override
@@ -24,18 +25,23 @@ class _DeviceSettingsScreenState extends State<DeviceSettingsScreen> {
           children: [
             TextField(
               controller: _urlCtrl,
-              decoration: const InputDecoration(labelText: 'Server URL', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'Server URL', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 12),
             ElevatedButton(
               onPressed: () async {
                 widget.client.baseUrl = _urlCtrl.text.trim();
                 final ok = await widget.client.checkHealth();
-                setState(() => _status = ok ? 'Connected successfully.' : 'Server unreachable.');
+                setState(() => _status =
+                    ok ? 'Connected successfully.' : 'Server unreachable.');
               },
               child: const Text('Test & Save Connection'),
             ),
-            if (_status.isNotEmpty) Padding(padding: const EdgeInsets.only(top: 12), child: Text(_status)),
+            if (_status.isNotEmpty)
+              Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(_status)),
           ],
         ),
       ),
@@ -68,7 +74,8 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
           const SizedBox(height: 12),
           SwitchListTile(
             title: const Text('Enable Geofence Location Tracking'),
-            subtitle: const Text('Allows Android companion to report geofence enter/exit events'),
+            subtitle: const Text(
+                'Allows Android companion to report geofence enter/exit events'),
             value: _locationOptIn,
             onChanged: (val) async {
               setState(() => _locationOptIn = val);
@@ -84,7 +91,8 @@ class _PrivacySettingsScreenState extends State<PrivacySettingsScreen> {
 class ProfileScreen extends StatelessWidget {
   final FridayApiClient client;
   final VoidCallback onLogout;
-  const ProfileScreen({super.key, required this.client, required this.onLogout});
+  const ProfileScreen(
+      {super.key, required this.client, required this.onLogout});
 
   @override
   Widget build(BuildContext context) {
@@ -100,7 +108,8 @@ class ProfileScreen extends StatelessWidget {
             Text('Server: ${client.baseUrl}'),
             const SizedBox(height: 24),
             ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
+              style:
+                  ElevatedButton.styleFrom(backgroundColor: Colors.redAccent),
               onPressed: () {
                 client.bearerToken = null;
                 client.deviceId = null;

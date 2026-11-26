@@ -5,7 +5,8 @@ class PairingScreen extends StatefulWidget {
   final FridayApiClient client;
   final VoidCallback onPaired;
 
-  const PairingScreen({super.key, required this.client, required this.onPaired});
+  const PairingScreen(
+      {super.key, required this.client, required this.onPaired});
 
   @override
   State<PairingScreen> createState() => _PairingScreenState();
@@ -58,18 +59,22 @@ class _PairingScreenState extends State<PairingScreen> {
             const SizedBox(height: 16),
             TextField(
               controller: _urlCtrl,
-              decoration: const InputDecoration(labelText: 'FRIDAY Server URL', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'FRIDAY Server URL', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _nameCtrl,
-              decoration: const InputDecoration(labelText: 'Device Name', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: 'Device Name', border: OutlineInputBorder()),
             ),
             const SizedBox(height: 12),
             TextField(
               controller: _codeCtrl,
               keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: '6-Digit Pairing Code', border: OutlineInputBorder()),
+              decoration: const InputDecoration(
+                  labelText: '6-Digit Pairing Code',
+                  border: OutlineInputBorder()),
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),

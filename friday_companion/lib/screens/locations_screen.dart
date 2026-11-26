@@ -33,7 +33,8 @@ class _LocationsScreenState extends State<LocationsScreen> {
     final lat = double.tryParse(_latCtrl.text.trim());
     final lon = double.tryParse(_lonCtrl.text.trim());
     if (_nameCtrl.text.trim().isEmpty || lat == null || lon == null) return;
-    await widget.client.saveLocation(name: _nameCtrl.text.trim(), latitude: lat, longitude: lon);
+    await widget.client.saveLocation(
+        name: _nameCtrl.text.trim(), latitude: lat, longitude: lon);
     _nameCtrl.clear();
     _latCtrl.clear();
     _lonCtrl.clear();
@@ -48,16 +49,28 @@ class _LocationsScreenState extends State<LocationsScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            TextField(controller: _nameCtrl, decoration: const InputDecoration(labelText: 'Location Name (e.g. college)')),
+            TextField(
+                controller: _nameCtrl,
+                decoration: const InputDecoration(
+                    labelText: 'Location Name (e.g. college)')),
             Row(
               children: [
-                Expanded(child: TextField(controller: _latCtrl, decoration: const InputDecoration(labelText: 'Latitude'))),
+                Expanded(
+                    child: TextField(
+                        controller: _latCtrl,
+                        decoration:
+                            const InputDecoration(labelText: 'Latitude'))),
                 const SizedBox(width: 8),
-                Expanded(child: TextField(controller: _lonCtrl, decoration: const InputDecoration(labelText: 'Longitude'))),
+                Expanded(
+                    child: TextField(
+                        controller: _lonCtrl,
+                        decoration:
+                            const InputDecoration(labelText: 'Longitude'))),
               ],
             ),
             const SizedBox(height: 10),
-            ElevatedButton(onPressed: _save, child: const Text('Save Geofence Location')),
+            ElevatedButton(
+                onPressed: _save, child: const Text('Save Geofence Location')),
             const Divider(height: 24),
             Expanded(
               child: ListView.builder(
@@ -67,7 +80,8 @@ class _LocationsScreenState extends State<LocationsScreen> {
                   return ListTile(
                     leading: const Icon(Icons.place),
                     title: Text(loc.name),
-                    subtitle: Text('${loc.latitude}, ${loc.longitude} (${loc.radiusMeters}m)'),
+                    subtitle: Text(
+                        '${loc.latitude}, ${loc.longitude} (${loc.radiusMeters}m)'),
                   );
                 },
               ),

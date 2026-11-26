@@ -22,7 +22,8 @@ class _SplashScreenState extends State<SplashScreen> {
   void initState() {
     super.initState();
     Future.delayed(const Duration(milliseconds: 500), () async {
-      if (widget.client.bearerToken != null && widget.client.bearerToken!.isNotEmpty) {
+      if (widget.client.bearerToken != null &&
+          widget.client.bearerToken!.isNotEmpty) {
         await widget.client.checkHealth();
         if (mounted) widget.onReadyPaired();
       } else {
@@ -41,12 +42,21 @@ class _SplashScreenState extends State<SplashScreen> {
             CircleAvatar(
               radius: 36,
               backgroundColor: Color(0xFF1D4ED8),
-              child: Text('F', style: TextStyle(fontSize: 32, fontWeight: FontWeight.bold, color: Colors.white)),
+              child: Text('F',
+                  style: TextStyle(
+                      fontSize: 32,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white)),
             ),
             SizedBox(height: 16),
-            Text('FRIDAY', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, letterSpacing: 3)),
+            Text('FRIDAY',
+                style: TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
+                    letterSpacing: 3)),
             SizedBox(height: 8),
-            Text('Local-first Personal AI Companion', style: TextStyle(color: Colors.grey)),
+            Text('Local-first Personal AI Companion',
+                style: TextStyle(color: Colors.grey)),
           ],
         ),
       ),

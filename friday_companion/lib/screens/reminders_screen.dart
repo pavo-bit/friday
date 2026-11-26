@@ -23,7 +23,11 @@ class _RemindersScreenState extends State<RemindersScreen> {
   Future<void> _load() async {
     try {
       final list = await widget.client.listReminders();
-      if (mounted) setState(() { _items = list; _error = null; });
+      if (mounted)
+        setState(() {
+          _items = list;
+          _error = null;
+        });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
@@ -31,20 +35,25 @@ class _RemindersScreenState extends State<RemindersScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) return Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(_error!)));
+    if (_error != null)
+      return Center(
+          child:
+              Padding(padding: const EdgeInsets.all(20), child: Text(_error!)));
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: _items.isEmpty ? 1 : _items.length,
         itemBuilder: (_, idx) {
-          if (_items.isEmpty) return const ListTile(title: Text('No reminders scheduled.'));
+          if (_items.isEmpty)
+            return const ListTile(title: Text('No reminders scheduled.'));
           final r = _items[idx];
           return Card(
             child: ListTile(
               leading: Icon(r.isAlarm ? Icons.alarm : Icons.event_note),
               title: Text(r.title),
-              subtitle: Text('${r.dueAt ?? 'Location trigger'} · ${r.recurrence} · ${r.status}'),
+              subtitle: Text(
+                  '${r.dueAt ?? 'Location trigger'} · ${r.recurrence} · ${r.status}'),
             ),
           );
         },

@@ -23,7 +23,11 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
   Future<void> _load() async {
     try {
       final list = await widget.client.listWatchers();
-      if (mounted) setState(() { _watchers = list; _error = null; });
+      if (mounted)
+        setState(() {
+          _watchers = list;
+          _error = null;
+        });
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     }
@@ -31,14 +35,18 @@ class _MonitoringScreenState extends State<MonitoringScreen> {
 
   @override
   Widget build(BuildContext context) {
-    if (_error != null) return Center(child: Padding(padding: const EdgeInsets.all(20), child: Text(_error!)));
+    if (_error != null)
+      return Center(
+          child:
+              Padding(padding: const EdgeInsets.all(20), child: Text(_error!)));
     return RefreshIndicator(
       onRefresh: _load,
       child: ListView.builder(
         padding: const EdgeInsets.all(12),
         itemCount: _watchers.isEmpty ? 1 : _watchers.length,
         itemBuilder: (_, idx) {
-          if (_watchers.isEmpty) return const ListTile(title: Text('No active watchers.'));
+          if (_watchers.isEmpty)
+            return const ListTile(title: Text('No active watchers.'));
           final w = _watchers[idx];
           return Card(
             child: ListTile(

@@ -43,15 +43,23 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
         Card(
           color: online ? const Color(0xFF0E2920) : const Color(0xFF2D1619),
           child: ListTile(
-            leading: Icon(online ? Icons.check_circle : Icons.cloud_off, color: online ? Colors.greenAccent : Colors.redAccent),
-            title: Text(online ? 'FRIDAY Brain Online' : 'FRIDAY Local Brain Unavailable'),
+            leading: Icon(online ? Icons.check_circle : Icons.cloud_off,
+                color: online ? Colors.greenAccent : Colors.redAccent),
+            title: Text(online
+                ? 'FRIDAY Brain Online'
+                : 'FRIDAY Local Brain Unavailable'),
             subtitle: Text(
               online
                   ? 'Connected to ${widget.client.baseUrl}'
                   : 'Your laptop server is offline. Remote tasks are paused until reconnected.',
             ),
             trailing: IconButton(
-              icon: _checking ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)) : const Icon(Icons.refresh),
+              icon: _checking
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.refresh),
               onPressed: _refresh,
             ),
           ),
@@ -67,11 +75,13 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           children: [
             _tile(Icons.chat, 'Conversation', () => widget.onNavigateTab(1)),
             _tile(Icons.mic, 'Voice Assistant', widget.onOpenVoice),
-            _tile(Icons.monitor_heart, 'Monitoring', () => widget.onNavigateTab(2)),
+            _tile(Icons.monitor_heart, 'Monitoring',
+                () => widget.onNavigateTab(2)),
             _tile(Icons.alarm, 'Reminders', () => widget.onNavigateTab(3)),
             _tile(Icons.notifications, 'Alerts', () => widget.onNavigateTab(4)),
             _tile(Icons.location_on, 'Locations', widget.onOpenLocations),
-            _tile(Icons.settings_ethernet, 'Connection', widget.onOpenDeviceSettings),
+            _tile(Icons.settings_ethernet, 'Connection',
+                widget.onOpenDeviceSettings),
             _tile(Icons.privacy_tip, 'Privacy', widget.onOpenPrivacy),
           ],
         ),
