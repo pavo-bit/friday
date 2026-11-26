@@ -787,7 +787,8 @@ CLAW_BINARY_PATH=/path/to/claw      # Auto-detected if not set
 ```bash
 STT_ENGINE=whisper_api              # whisper_api | whisper_local | none
 TTS_ENGINE=openai                   # openai | edge | none
-OPENAI_API_KEY=sk-...               # Required for whisper_api STT
+STT_ENGINE=none                    # Dashboard uses browser microphone input
+TTS_ENGINE=none                    # Dashboard uses browser speech synthesis
 WAKE_WORD=friday                    # Voice activation word
 ```
 
