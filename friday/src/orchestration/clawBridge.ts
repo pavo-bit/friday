@@ -144,13 +144,6 @@ export class ClawBridge {
 
           output = stripAnsi(output).trim();
 
-          // Handle missing credentials gracefully
-          if (output.includes('missing Anthropic credentials')) {
-            output =
-              'Claw cannot reach the AI API — the Anthropic API key is missing. ' +
-              'Please set ANTHROPIC_API_KEY in friday/.env';
-          }
-
           const success = !error;
           const exitCode = error ? (error as NodeJS.ErrnoException & { code?: number }).code ? null : 1 : 0;
 

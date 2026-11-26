@@ -175,8 +175,8 @@ export interface FridayConfig {
   port: number;
   host: string;
   clawBinaryPath: string;
-  anthropicApiKey: string;
-  openaiApiKey?: string;
+  ollamaBaseUrl: string;
+  ollamaModel: string;
 
   // Safety
   rateLimitPerMinute: number;

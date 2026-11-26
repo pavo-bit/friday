@@ -39,8 +39,8 @@ export function loadConfig(): FridayConfig {
     port: parseInt(process.env.FRIDAY_PORT || '3141', 10),
     host: process.env.FRIDAY_HOST || '127.0.0.1',
     clawBinaryPath: process.env.CLAW_BINARY_PATH || detectClawBinary(),
-    anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-    openaiApiKey: process.env.OPENAI_API_KEY,
+    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434',
+    ollamaModel: process.env.OLLAMA_MODEL || 'qwen3:4b',
 
     // Safety
     rateLimitPerMinute: parseInt(process.env.RATE_LIMIT_PER_MINUTE || '30', 10),
@@ -72,19 +72,11 @@ export function loadConfig(): FridayConfig {
 export function validateConfig(config: FridayConfig): string[] {
   const errors: string[] = [];
 
-  if (!config.anthropicApiKey) {
-    errors.push('ANTHROPIC_API_KEY is required. Set it in friday/.env or environment.');
-  }
-
   if (!fs.existsSync(config.clawBinaryPath)) {
     errors.push(
       `Claw binary not found at: ${config.clawBinaryPath}. ` +
         'Build it with: cd rust && cargo build --workspace'
     );
-  }
-
-  if (config.sttEngine === 'whisper_api' && !config.openaiApiKey) {
-    errors.push('OPENAI_API_KEY is required when STT_ENGINE=whisper_api');
   }
 
   if (config.port < 1 || config.port > 65535) {

@@ -16,6 +16,7 @@ use super::{preflight_message_request, Provider, ProviderFuture};
 
 pub const DEFAULT_XAI_BASE_URL: &str = "https://api.x.ai/v1";
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
+pub const DEFAULT_OLLAMA_BASE_URL: &str = "http://127.0.0.1:11434/v1";
 const REQUEST_ID_HEADER: &str = "request-id";
 const ALT_REQUEST_ID_HEADER: &str = "x-request-id";
 const DEFAULT_INITIAL_BACKOFF: Duration = Duration::from_millis(200);
@@ -53,6 +54,16 @@ impl OpenAiCompatConfig {
             default_base_url: DEFAULT_OPENAI_BASE_URL,
         }
     }
+    #[must_use]
+    pub const fn ollama() -> Self {
+        Self {
+            provider_name: "Ollama",
+            api_key_env: "",
+            base_url_env: "OLLAMA_BASE_URL",
+            default_base_url: DEFAULT_OLLAMA_BASE_URL,
+        }
+    }
+
     #[must_use]
     pub fn credential_env_vars(self) -> &'static [&'static str] {
         match self.provider_name {
@@ -193,10 +204,13 @@ impl OpenAiCompatClient {
         request: &MessageRequest,
     ) -> Result<reqwest::Response, ApiError> {
         let request_url = chat_completions_endpoint(&self.base_url);
-        self.http
+        let mut builder = self.http
             .post(&request_url)
-            .header("content-type", "application/json")
-            .bearer_auth(&self.api_key)
+            .header("content-type", "application/json");
+        if !self.api_key.trim().is_empty() {
+            builder = builder.bearer_auth(&self.api_key);
+        }
+        builder
             .json(&build_chat_completion_request(request, self.config()))
             .send()
             .await
