@@ -536,13 +536,6 @@ const SLASH_COMMAND_SPECS: &[SlashCommandSpec] = &[
         resume_supported: true,
     },
     SlashCommandSpec {
-        name: "api-key",
-        aliases: &[],
-        summary: "Show or set the Anthropic API key",
-        argument_hint: Some("[key]"),
-        resume_supported: false,
-    },
-    SlashCommandSpec {
         name: "approve",
         aliases: &["yes", "y"],
         summary: "Approve a pending tool execution",
