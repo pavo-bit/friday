@@ -79,6 +79,7 @@ cargo test --workspace
 - [`rust/MOCK_PARITY_HARNESS.md`](./rust/MOCK_PARITY_HARNESS.md) — deterministic mock-service harness details
 - [`ROADMAP.md`](./ROADMAP.md) — active roadmap and open cleanup work
 - [`PHILOSOPHY.md`](./PHILOSOPHY.md) — why the project exists and how it is operated
+- [FRIDAY Android Companion specification](./docs/FRIDAY_ANDROID_COMPANION_SPEC.md) — approved mobile pairing, remote connectivity, permissions, screen sharing and device-control plan
 
 ## Ecosystem
 
