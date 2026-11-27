@@ -464,7 +464,7 @@ export class MemoryStore {
     };
   }
 
-  /** Create a hot SQLite backup to a target path */
+  /** Create a hot SQLite backup to a target path and verify its integrity */
   async backupDatabase(destPath: string): Promise<string> {
     if (!this.db) {
       throw new Error('Database is not initialized.');
@@ -474,7 +474,49 @@ export class MemoryStore {
       fs.mkdirSync(dir, { recursive: true });
     }
     await this.db.backup(destPath);
+    const check = await this.verifyBackup(destPath);
+    if (!check.ok) {
+      throw new Error(`Backup verification failed: ${check.error}`);
+    }
     return destPath;
+  }
+
+  /** Verify SQLite integrity of a backup file without mutating the live DB */
+  async verifyBackup(backupPath: string): Promise<{ ok: boolean; error?: string }> {
+    if (!fs.existsSync(backupPath)) {
+      return { ok: false, error: 'Backup file does not exist' };
+    }
+    let testDb: Database.Database | null = null;
+    try {
+      const DatabaseCtor = (await import('better-sqlite3')).default;
+      testDb = new DatabaseCtor(backupPath, { readonly: true, fileMustExist: true });
+      const row = testDb.prepare('PRAGMA integrity_check').get() as { integrity_check?: string } | undefined;
+      if (row?.integrity_check !== 'ok') {
+        return { ok: false, error: `Integrity check returned: ${row?.integrity_check}` };
+      }
+      return { ok: true };
+    } catch (err) {
+      return { ok: false, error: (err as Error).message };
+    } finally {
+      testDb?.close();
+    }
+  }
+
+  /** Safely restore from a verified backup, saving a pre-restore snapshot first */
+  async restoreDatabase(backupPath: string): Promise<{ restored: boolean; safetyBackupPath: string }> {
+    const check = await this.verifyBackup(backupPath);
+    if (!check.ok) {
+      throw new Error(`Cannot restore corrupted or invalid backup: ${check.error}`);
+    }
+    const currentDbPath = this.dbPath;
+    const safetyBackupPath = `${currentDbPath}.pre-restore-${Date.now()}.bak`;
+    if (this.db) {
+      await this.db.backup(safetyBackupPath);
+      this.close();
+    }
+    fs.copyFileSync(backupPath, currentDbPath);
+    await this.initialize();
+    return { restored: true, safetyBackupPath };
   }
 
   /** Close the database connection */

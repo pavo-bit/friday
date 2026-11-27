@@ -98,6 +98,12 @@ function simulateSlice(params: {
     for (let j = i + 1; j < candles.length; j++) {
       const bar = candles[j];
       if (candidate.direction === 'LONG') {
+        // Conservative: check gap-through stop-loss, then intrabar stop-loss, then target
+        if (bar.openMinor <= candidate.stopLossMinor) {
+          exitPrice = bar.openMinor - slipPerShare;
+          exitIdx = j;
+          break;
+        }
         if (bar.lowMinor <= candidate.stopLossMinor) {
           exitPrice = candidate.stopLossMinor - slipPerShare;
           exitIdx = j;
@@ -109,6 +115,11 @@ function simulateSlice(params: {
           break;
         }
       } else {
+        if (bar.openMinor >= candidate.stopLossMinor) {
+          exitPrice = bar.openMinor + slipPerShare;
+          exitIdx = j;
+          break;
+        }
         if (bar.highMinor >= candidate.stopLossMinor) {
           exitPrice = candidate.stopLossMinor + slipPerShare;
           exitIdx = j;
