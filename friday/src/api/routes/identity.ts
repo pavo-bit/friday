@@ -3,7 +3,12 @@
 // ============================================================
 
 import { Router, Request, Response } from 'express';
-import { ActorImpersonationError, enforceActorScope, resolveCallerIdentity } from '../authContext';
+import {
+  ActorImpersonationError,
+  enforceActorScope,
+  resolveActorOrRespond,
+  resolveCallerIdentity,
+} from '../authContext';
 import { getPersonalIdentityService } from '../../identity/identityService';
 import { getProjectContextService } from '../../identity/projectContextService';
 import { IdentityPolicyError } from '../../identity/identityPolicy';
@@ -48,13 +53,9 @@ identityRoutes.put('/', async (req: Request, res: Response) => {
 // GET /friday/identity/projects — list all projects for actor
 identityRoutes.get('/projects', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const projects = await getProjectContextService().listProjects(actorId);
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const projects = await getProjectContextService().listProjects(ctx.actorId);
     const activeProject = projects.find((p) => p.isActive) || null;
     res.json({ projects, activeProject });
   } catch (err) {
@@ -65,18 +66,14 @@ identityRoutes.get('/projects', async (req: Request, res: Response) => {
 // POST /friday/identity/projects — create or update a project context
 identityRoutes.post('/projects', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as Record<string, unknown>;
-    const actorId = (body.actorId as string) || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId as string | undefined);
+    if (!ctx) return;
     if (!body.projectName || typeof body.projectName !== 'string') {
       res.status(400).json({ error: 'projectName is required' });
       return;
     }
-    const project = await getProjectContextService().upsertProject(actorId, {
+    const project = await getProjectContextService().upsertProject(ctx.actorId, {
       projectName: body.projectName,
       repoPath: typeof body.repoPath === 'string' ? body.repoPath : undefined,
       techStack: Array.isArray(body.techStack) ? (body.techStack as string[]) : undefined,
@@ -100,18 +97,14 @@ identityRoutes.post('/projects', async (req: Request, res: Response) => {
 // PUT /friday/identity/projects — alias for upsert
 identityRoutes.put('/projects', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as Record<string, unknown>;
-    const actorId = (body.actorId as string) || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId as string | undefined);
+    if (!ctx) return;
     if (!body.projectName || typeof body.projectName !== 'string') {
       res.status(400).json({ error: 'projectName is required' });
       return;
     }
-    const project = await getProjectContextService().upsertProject(actorId, {
+    const project = await getProjectContextService().upsertProject(ctx.actorId, {
       projectName: body.projectName,
       repoPath: typeof body.repoPath === 'string' ? body.repoPath : undefined,
       techStack: Array.isArray(body.techStack) ? (body.techStack as string[]) : undefined,
@@ -135,18 +128,14 @@ identityRoutes.put('/projects', async (req: Request, res: Response) => {
 // POST /friday/identity/projects/switch — switch active project
 identityRoutes.post('/projects/switch', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as { actorId?: string; projectName?: string };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!body.projectName) {
       res.status(400).json({ error: 'projectName is required' });
       return;
     }
-    const result = await getProjectContextService().switchProject(actorId, body.projectName);
+    const result = await getProjectContextService().switchProject(ctx.actorId, body.projectName);
     if (!result.switched || !result.project) {
       res.status(404).json({ error: result.message || `Project "${body.projectName}" not found` });
       return;
@@ -160,19 +149,15 @@ identityRoutes.post('/projects/switch', async (req: Request, res: Response) => {
 // POST /friday/identity/projects/compare — compare two projects
 identityRoutes.post('/projects/compare', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as { actorId?: string; projectA?: string; projectB?: string };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!body.projectA || !body.projectB) {
       res.status(400).json({ error: 'projectA and projectB are required' });
       return;
     }
     const comparison = await getProjectContextService().compareProjects(
-      actorId,
+      ctx.actorId,
       body.projectA,
       body.projectB
     );

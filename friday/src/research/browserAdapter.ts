@@ -4,13 +4,47 @@
 // login/paywall respect, and untrusted-content sanitization.
 // ============================================================
 
+import * as dns from 'dns/promises';
+import * as net from 'net';
 import { sanitizeRetrievedText } from '../orchestration/contextResolution';
 import { BrowserPageResult, BrowserSessionOptions, FailedPageRecord } from './researchTypes';
 
 const MAX_BODY_BYTES = 1_500_000; // 1.5 MB per page cap
+const MAX_REDIRECTS = 5;
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_MAX_DEPTH = 1;
 const DEFAULT_MAX_PAGES = 5;
+
+export function isBlockedIp(rawIp: string): boolean {
+  const ip = rawIp.replace(/^\[|\]$/g, '').trim();
+  const mappedMatch = ip.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  const v4 = mappedMatch ? mappedMatch[1] : net.isIPv4(ip) ? ip : null;
+  if (v4) {
+    const parts = v4.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => Number.isNaN(n) || n < 0 || n > 255)) return true;
+    const [a, b] = parts;
+    if (a === 0 || a === 10 || a === 127) return true; // 0.0.0.0/8, 10.0.0.0/8, 127.0.0.0/8
+    if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local & cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true; // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true; // 100.64.0.0/10 CGNAT
+    if (a >= 224) return true; // Multicast / reserved
+    return false;
+  }
+
+  if (net.isIPv6(ip)) {
+    const lower = ip.toLowerCase();
+    if (lower === '::1' || lower === '::') return true;
+    if (lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) {
+      return true; // fe80::/10 link-local
+    }
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // fc00::/7 unique local
+    if (lower.startsWith('ff')) return true; // ff00::/8 multicast
+    return false;
+  }
+
+  return true;
+}
 
 export interface CrawlSessionOutcome {
   pages: BrowserPageResult[];
@@ -42,7 +76,41 @@ export class IsolatedBrowserAdapter {
     if (!parsed.hostname) {
       throw new Error('URL must include a valid hostname.');
     }
+    const allowLocal = process.env.FRIDAY_ALLOW_LOCALHOST_RESEARCH === 'true';
+    const hostLower = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    if (!allowLocal) {
+      if (hostLower === 'localhost' || hostLower.endsWith('.local') || hostLower.endsWith('.internal')) {
+        throw new Error(`SSRF protection: blocked local/internal hostname "${parsed.hostname}".`);
+      }
+      if (net.isIP(hostLower) && isBlockedIp(hostLower)) {
+        throw new Error(`SSRF protection: blocked non-public IP address "${parsed.hostname}".`);
+      }
+    }
     return parsed;
+  }
+
+  /**
+   * DNS-rebinding & destination IP check performed right before each HTTP hop.
+   */
+  async assertSafeDestination(parsed: URL): Promise<void> {
+    this.validatePublicUrl(parsed.toString());
+    if (process.env.FRIDAY_ALLOW_LOCALHOST_RESEARCH === 'true') return;
+    const host = parsed.hostname.replace(/^\[|\]$/g, '');
+    if (net.isIP(host)) {
+      if (isBlockedIp(host)) {
+        throw new Error(`SSRF protection: blocked destination IP "${host}".`);
+      }
+      return;
+    }
+    const records = await dns.lookup(host, { all: true });
+    if (!records || records.length === 0) {
+      throw new Error(`DNS resolution failed for "${host}".`);
+    }
+    for (const rec of records) {
+      if (isBlockedIp(rec.address)) {
+        throw new Error(`SSRF protection: "${host}" resolved to blocked IP "${rec.address}".`);
+      }
+    }
   }
 
   /**
@@ -168,15 +236,48 @@ export class IsolatedBrowserAdapter {
     sessionSignal.addEventListener('abort', onSessionAbort, { once: true });
 
     try {
-      const response = await fetch(url, {
-        method: 'GET',
-        redirect: 'follow',
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'FRIDAY-ResearchBot/1.0 (+local-first-assistant)',
-          Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
-        },
-      });
+      let currentUrl = url;
+      let response: Response | null = null;
+      for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+        const parsedHop = new URL(currentUrl);
+        await this.assertSafeDestination(parsedHop);
+
+        response = await fetch(currentUrl, {
+          method: 'GET',
+          redirect: 'manual',
+          signal: controller.signal,
+          headers: {
+            'User-Agent': 'FRIDAY-ResearchBot/1.0 (+local-first-assistant)',
+            Accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.8',
+          },
+        });
+
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get('location');
+          if (!location) break;
+          if (hop === MAX_REDIRECTS) {
+            return {
+              url,
+              reason: `Exceeded maximum redirect hops (${MAX_REDIRECTS}).`,
+              statusCode: response.status,
+              timestamp: new Date().toISOString(),
+            };
+          }
+          const nextUrl = new URL(location, currentUrl);
+          await this.assertSafeDestination(nextUrl);
+          currentUrl = nextUrl.toString();
+          continue;
+        }
+        break;
+      }
+
+      if (!response) {
+        return {
+          url,
+          reason: 'No HTTP response received.',
+          timestamp: new Date().toISOString(),
+        };
+      }
 
       if (response.status === 401 || response.status === 402 || response.status === 403) {
         return {
@@ -198,7 +299,7 @@ export class IsolatedBrowserAdapter {
 
       const rawText = await response.text();
       const boundedHtml = rawText.slice(0, MAX_BODY_BYTES);
-      const finalUrl = response.url || url;
+      const finalUrl = currentUrl;
 
       return this.parseHtml(finalUrl, response.status, boundedHtml, response.headers);
     } catch (err) {

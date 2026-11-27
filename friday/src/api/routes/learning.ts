@@ -3,7 +3,12 @@
 // ============================================================
 
 import { Router, Request, Response } from 'express';
-import { ActorImpersonationError, enforceActorScope, resolveCallerIdentity } from '../authContext';
+import {
+  ActorImpersonationError,
+  enforceActorScope,
+  resolveActorOrRespond,
+  resolveCallerIdentity,
+} from '../authContext';
 import { getContinuousLearningEngine } from '../../learning/learningEngine';
 import { LearningKind, LearningSourceType, SourceQuality } from '../../learning/learningTypes';
 
@@ -12,11 +17,6 @@ export const learningRoutes = Router();
 // POST /friday/learning/ingest — ingest approved learning input
 learningRoutes.post('/ingest', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as {
       actorId?: string;
       sourceType?: LearningSourceType;
@@ -29,13 +29,14 @@ learningRoutes.post('/ingest', async (req: Request, res: Response) => {
       approvedSource?: boolean;
       expiresAt?: string;
     };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!body.sourceType || !body.subject || !body.rawContent) {
       res.status(400).json({ error: 'sourceType, subject, and rawContent are required' });
       return;
     }
     const result = await getContinuousLearningEngine().ingest({
-      actorId,
+      actorId: ctx.actorId,
       sourceType: body.sourceType,
       sourceRef: body.sourceRef || 'api',
       subject: body.subject,
@@ -83,24 +84,20 @@ learningRoutes.get('/records', async (req: Request, res: Response) => {
 // POST /friday/learning/correction — record explicit user correction
 learningRoutes.post('/correction', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as {
       actorId?: string;
       subject?: string;
       correction?: string;
       projectName?: string;
     };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!body.subject || !body.correction) {
       res.status(400).json({ error: 'subject and correction are required' });
       return;
     }
     const result = await getContinuousLearningEngine().recordCorrection({
-      actorId,
+      actorId: ctx.actorId,
       subject: body.subject,
       correction: body.correction,
       projectName: body.projectName,
@@ -114,13 +111,9 @@ learningRoutes.post('/correction', async (req: Request, res: Response) => {
 // GET /friday/learning/procedures — list proposed & approved procedures
 learningRoutes.get('/procedures', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const procedures = await getContinuousLearningEngine().listProcedures(actorId);
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const procedures = await getContinuousLearningEngine().listProcedures(ctx.actorId);
     res.json({ procedures });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -130,24 +123,20 @@ learningRoutes.get('/procedures', async (req: Request, res: Response) => {
 // POST /friday/learning/procedures — propose a new learned procedure (unapproved by default)
 learningRoutes.post('/procedures', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as {
       actorId?: string;
       name?: string;
       description?: string;
       steps?: string[];
     };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!body.name || !body.description || !Array.isArray(body.steps)) {
       res.status(400).json({ error: 'name, description, and steps array are required' });
       return;
     }
     const procedure = await getContinuousLearningEngine().proposeProcedure({
-      actorId,
+      actorId: ctx.actorId,
       name: body.name,
       description: body.description,
       steps: body.steps,
@@ -161,15 +150,11 @@ learningRoutes.post('/procedures', async (req: Request, res: Response) => {
 // POST /friday/learning/procedures/:id/approve — explicit human approval of procedure
 learningRoutes.post('/procedures/:id/approve', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as { actorId?: string; approvedByHuman?: boolean };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     const procedure = await getContinuousLearningEngine().approveProcedure(
-      actorId,
+      ctx.actorId,
       String(req.params.id),
       Boolean(body.approvedByHuman)
     );
@@ -182,19 +167,15 @@ learningRoutes.post('/procedures/:id/approve', async (req: Request, res: Respons
 // POST /friday/learning/procedures/:id/execute — execute an approved procedure with permission check
 learningRoutes.post('/procedures/:id/execute', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as {
       actorId?: string;
       approvedByHuman?: boolean;
       grantedPermissions?: string[];
     };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     const execution = await getContinuousLearningEngine().executeProcedure(
-      actorId,
+      ctx.actorId,
       String(req.params.id),
       {
         approvedByHuman: Boolean(body.approvedByHuman),
@@ -210,15 +191,11 @@ learningRoutes.post('/procedures/:id/execute', async (req: Request, res: Respons
 // POST /friday/learning/records/:id/approve — explicit human approval of knowledge record
 learningRoutes.post('/records/:id/approve', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as { actorId?: string; approvedByHuman?: boolean };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     const record = await getContinuousLearningEngine().approveKnowledge(
-      actorId,
+      ctx.actorId,
       String(req.params.id),
       Boolean(body.approvedByHuman)
     );
@@ -231,13 +208,9 @@ learningRoutes.post('/records/:id/approve', async (req: Request, res: Response) 
 // DELETE /friday/learning/records/:id — delete actor-owned knowledge record
 learningRoutes.delete('/records/:id', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const deleted = await getContinuousLearningEngine().deleteKnowledge(actorId, String(req.params.id));
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const deleted = await getContinuousLearningEngine().deleteKnowledge(ctx.actorId, String(req.params.id));
     res.status(deleted ? 200 : 404).json({ deleted });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -247,13 +220,9 @@ learningRoutes.delete('/records/:id', async (req: Request, res: Response) => {
 // GET /friday/learning/contradictions — list knowledge contradictions
 learningRoutes.get('/contradictions', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const contradictions = await getContinuousLearningEngine().listContradictions(actorId);
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const contradictions = await getContinuousLearningEngine().listContradictions(ctx.actorId);
     res.json({ contradictions });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -263,19 +232,15 @@ learningRoutes.get('/contradictions', async (req: Request, res: Response) => {
 // POST /friday/learning/contradictions/:id/resolve — resolve contradiction explicitly
 learningRoutes.post('/contradictions/:id/resolve', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as { actorId?: string; resolution?: 'KEEP_EXISTING' | 'USE_NEW' };
-    const actorId = body.actorId || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (body.resolution !== 'KEEP_EXISTING' && body.resolution !== 'USE_NEW') {
       res.status(400).json({ error: 'resolution must be KEEP_EXISTING or USE_NEW' });
       return;
     }
     const contradiction = await getContinuousLearningEngine().resolveContradiction(
-      actorId,
+      ctx.actorId,
       String(req.params.id),
       body.resolution
     );
@@ -288,13 +253,9 @@ learningRoutes.post('/contradictions/:id/resolve', async (req: Request, res: Res
 // GET /friday/learning/records/:id/versions — get correction/version history
 learningRoutes.get('/records/:id/versions', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const versions = await getContinuousLearningEngine().getVersionHistory(actorId, String(req.params.id));
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const versions = await getContinuousLearningEngine().getVersionHistory(ctx.actorId, String(req.params.id));
     res.json({ versions });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -304,13 +265,9 @@ learningRoutes.get('/records/:id/versions', async (req: Request, res: Response) 
 // GET /friday/learning/stale — list stale/outdated knowledge records
 learningRoutes.get('/stale', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const records = await getContinuousLearningEngine().listStaleRecords(actorId);
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const records = await getContinuousLearningEngine().listStaleRecords(ctx.actorId);
     res.json({ records });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });

@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Router, Request, Response } from 'express';
-import { resolveCallerIdentity } from '../authContext';
+import { resolveActorOrRespond } from '../authContext';
 import { getWebResearchEngine } from '../../research/researchEngine';
 import { getContinuousLearningEngine } from '../../learning/learningEngine';
 
@@ -12,11 +12,6 @@ export const researchRoutes = Router();
 // POST /friday/research/analyze — analyze a single website
 researchRoutes.post('/analyze', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as {
       actorId?: string;
       conversationId?: string;
@@ -26,12 +21,14 @@ researchRoutes.post('/analyze', async (req: Request, res: Response) => {
       maxPages?: number;
       timeoutMs?: number;
     };
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!body.url) {
       res.status(400).json({ error: 'url is required' });
       return;
     }
     const job = await getWebResearchEngine().analyzeWebsite({
-      actorId: body.actorId || identity.actorId,
+      actorId: ctx.actorId,
       conversationId: body.conversationId || 'default',
       url: body.url,
       query: body.query,
@@ -48,11 +45,6 @@ researchRoutes.post('/analyze', async (req: Request, res: Response) => {
 // POST /friday/research/compare — compare multiple websites
 researchRoutes.post('/compare', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as {
       actorId?: string;
       conversationId?: string;
@@ -62,12 +54,14 @@ researchRoutes.post('/compare', async (req: Request, res: Response) => {
       maxPagesPerSite?: number;
       timeoutMs?: number;
     };
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
     if (!Array.isArray(body.urls) || body.urls.length < 2) {
       res.status(400).json({ error: 'At least 2 urls are required' });
       return;
     }
     const job = await getWebResearchEngine().compareWebsites({
-      actorId: body.actorId || identity.actorId,
+      actorId: ctx.actorId,
       conversationId: body.conversationId || 'default',
       urls: body.urls,
       query: body.query,
@@ -84,14 +78,10 @@ researchRoutes.post('/compare', async (req: Request, res: Response) => {
 // GET /friday/research/jobs — list research history
 researchRoutes.get('/jobs', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
     const limit = parseInt((req.query.limit as string) || '20', 10);
-    const jobs = await getWebResearchEngine().listJobs(actorId, limit);
+    const jobs = await getWebResearchEngine().listJobs(ctx.actorId, limit);
     res.json({ jobs });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -101,13 +91,9 @@ researchRoutes.get('/jobs', async (req: Request, res: Response) => {
 // GET /friday/research/jobs/:id — get specific research job & report
 researchRoutes.get('/jobs/:id', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.query.actorId as string) || identity.actorId;
-    const job = await getWebResearchEngine().getJob(String(req.params.id), actorId);
+    const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+    if (!ctx) return;
+    const job = await getWebResearchEngine().getJob(String(req.params.id), ctx.actorId);
     if (!job) {
       res.status(404).json({ error: 'Research job not found' });
       return;
@@ -121,13 +107,9 @@ researchRoutes.get('/jobs/:id', async (req: Request, res: Response) => {
 // POST /friday/research/jobs/:id/cancel — cancel an active research job
 researchRoutes.post('/jobs/:id/cancel', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
-    const actorId = (req.body?.actorId as string) || identity.actorId;
-    const cancelled = await getWebResearchEngine().cancelJob(String(req.params.id), actorId);
+    const ctx = await resolveActorOrRespond(req, res, req.body?.actorId as string | undefined);
+    if (!ctx) return;
+    const cancelled = await getWebResearchEngine().cancelJob(String(req.params.id), ctx.actorId);
     res.status(cancelled ? 200 : 404).json({ cancelled });
   } catch (err) {
     res.status(500).json({ error: (err as Error).message });
@@ -137,20 +119,16 @@ researchRoutes.post('/jobs/:id/cancel', async (req: Request, res: Response) => {
 // POST /friday/research/jobs/:id/save-to-learning — cross-phase: save approved research evidence into Continuous Learning
 researchRoutes.post('/jobs/:id/save-to-learning', async (req: Request, res: Response) => {
   try {
-    const identity = await resolveCallerIdentity(req);
-    if (!identity) {
-      res.status(401).json({ error: 'Unauthorized' });
-      return;
-    }
     const body = (req.body || {}) as { actorId?: string; projectName?: string };
-    const actorId = body.actorId || identity.actorId;
-    const job = await getWebResearchEngine().getJob(String(req.params.id), actorId);
+    const ctx = await resolveActorOrRespond(req, res, body.actorId);
+    if (!ctx) return;
+    const job = await getWebResearchEngine().getJob(String(req.params.id), ctx.actorId);
     if (!job || !job.report) {
       res.status(404).json({ error: 'Completed research job not found' });
       return;
     }
     const result = await getContinuousLearningEngine().ingest({
-      actorId,
+      actorId: ctx.actorId,
       sourceType: 'approved_website',
       sourceRef: job.urls[0] || job.id,
       subject: `Web Research: ${job.query}`,

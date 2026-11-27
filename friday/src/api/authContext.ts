@@ -39,11 +39,17 @@ export async function resolveCallerIdentity(req: Request): Promise<CallerIdentit
   }
 
   const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1', getConfig().host]);
+  const remoteAddr = req.socket?.remoteAddress || req.ip || '';
+  const isLoopbackSocket =
+    remoteAddr === '127.0.0.1' ||
+    remoteAddr === '::1' ||
+    remoteAddr === '::ffff:127.0.0.1';
   const isLocal =
-    req.ip === '127.0.0.1' ||
-    req.ip === '::1' ||
-    req.ip === '::ffff:127.0.0.1' ||
-    allowedHosts.has(req.hostname);
+    isLoopbackSocket &&
+    (req.ip === '127.0.0.1' ||
+      req.ip === '::1' ||
+      req.ip === '::ffff:127.0.0.1' ||
+      allowedHosts.has(req.hostname));
 
   if (!isLocal) {
     return null;
@@ -89,4 +95,29 @@ export function enforceActorScope(identity: CallerIdentity, requestedActorId?: s
     return trimmed;
   }
   throw new ActorImpersonationError();
+}
+
+/**
+ * Convenience helper for private routes: returns { identity, actorId } or sends 401/403 and returns null.
+ */
+export async function resolveActorOrRespond(
+  req: Request,
+  res: Response,
+  requestedActorId?: string
+): Promise<{ identity: CallerIdentity; actorId: string } | null> {
+  const identity = await resolveCallerIdentity(req);
+  if (!identity) {
+    res.status(401).json({ error: 'Unauthorized: valid bearer token required' });
+    return null;
+  }
+  try {
+    const actorId = enforceActorScope(identity, requestedActorId);
+    return { identity, actorId };
+  } catch (err) {
+    if (err instanceof ActorImpersonationError) {
+      res.status(403).json({ error: err.message });
+      return null;
+    }
+    throw err;
+  }
 }

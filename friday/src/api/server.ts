@@ -55,6 +55,7 @@ export class FridayServer {
 
   /** Configure Express middleware */
   private setupMiddleware(): void {
+    this.app.set('trust proxy', false);
     this.app.use(cors());
     this.app.use(express.json({ limit: '5mb' }));
 

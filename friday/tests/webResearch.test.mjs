@@ -9,6 +9,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'friday-phase14-test-'));
 process.env.FRIDAY_DB_PATH = path.join(tmpDir, 'friday-phase14.db');
 process.env.FRIDAY_PORT = '0';
 process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:19999/v1';
+process.env.FRIDAY_ALLOW_LOCALHOST_RESEARCH = 'true';
 
 const { getMemoryStore } = await import('../dist/memory/store.js');
 const { getBrowserAdapter } = await import('../dist/research/browserAdapter.js');

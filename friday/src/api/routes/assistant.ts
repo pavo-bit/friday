@@ -15,45 +15,62 @@ import { getMemoryStore } from '../../memory/store';
 import { getToolRegistry } from '../../orchestration/toolRegistry';
 import { getOllamaClient } from '../../orchestration/ollamaClient';
 import { getConfig } from '../../shared/config';
+import { resolveActorOrRespond, resolveCallerIdentity } from '../authContext';
 
 export const assistantRoutes = Router();
 
 // ---- Watchers & Advanced Monitoring (Phase 4 / Phase 15) ----
 assistantRoutes.get('/watchers', async (req: Request, res: Response) => {
-  const actorId = req.query.actorId as string | undefined;
+  const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+  if (!ctx) return;
   const projectName = req.query.projectName as string | undefined;
-  const list = await getMonitoringEngine().listWatchers(actorId, projectName);
+  const list = await getMonitoringEngine().listWatchers(ctx.identity.isLocal && !req.query.actorId ? undefined : ctx.actorId, projectName);
   res.json({ watchers: list });
 });
 
 assistantRoutes.get('/monitoring/overview', async (req: Request, res: Response) => {
-  const actorId = req.query.actorId as string | undefined;
+  const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+  if (!ctx) return;
   const projectName = req.query.projectName as string | undefined;
-  const overview = await getMonitoringEngine().getSystemHealthOverview(actorId, projectName);
+  const overview = await getMonitoringEngine().getSystemHealthOverview(
+    ctx.identity.isLocal && !req.query.actorId ? undefined : ctx.actorId,
+    projectName
+  );
   res.json(overview);
 });
 
 assistantRoutes.get('/monitoring/incidents', async (req: Request, res: Response) => {
-  const actorId = req.query.actorId as string | undefined;
+  const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+  if (!ctx) return;
   const projectName = req.query.projectName as string | undefined;
   const activeOnly = req.query.activeOnly === 'true';
-  const incidents = await getMonitoringEngine().listIncidents({ actorId, projectName, activeOnly });
+  const incidents = await getMonitoringEngine().listIncidents({
+    actorId: ctx.identity.isLocal && !req.query.actorId ? undefined : ctx.actorId,
+    projectName,
+    activeOnly,
+  });
   res.json({ incidents });
 });
 
 assistantRoutes.post('/monitoring/incidents/:id/acknowledge', async (req: Request, res: Response) => {
-  const actorId = (req.body?.actorId as string) || 'local';
-  const ok = await getMonitoringEngine().acknowledgeIncident(String(req.params.id), actorId);
+  const ctx = await resolveActorOrRespond(req, res, req.body?.actorId as string | undefined);
+  if (!ctx) return;
+  const ok = await getMonitoringEngine().acknowledgeIncident(String(req.params.id), ctx.actorId);
   res.status(ok ? 200 : 404).json({ acknowledged: ok });
 });
 
 assistantRoutes.post('/monitoring/incidents/:id/approve-action', async (req: Request, res: Response) => {
   try {
-    const actorId = (req.body?.actorId as string) || 'local';
+    const ctx = await resolveActorOrRespond(req, res, req.body?.actorId as string | undefined);
+    if (!ctx) return;
+    if (!ctx.identity.isLocal) {
+      res.status(403).json({ error: 'Forbidden: incident remediation approval requires local owner session.' });
+      return;
+    }
     const approvedByHuman = Boolean(req.body?.approvedByHuman);
     const ok = await getMonitoringEngine().approveIncidentAction(
       String(req.params.id),
-      actorId,
+      ctx.actorId,
       approvedByHuman
     );
     res.status(ok ? 200 : 404).json({ approved: ok });
@@ -283,21 +300,23 @@ assistantRoutes.post('/locations/geofence', async (req: Request, res: Response) 
 
 // ---- Personality & Digital Identity Settings (Phase 1 / Phase 9 / Phase 13) ----
 assistantRoutes.get('/personality', async (req: Request, res: Response) => {
+  const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+  if (!ctx) return;
   const store = await getMemoryStore();
-  const actorId = (req.query.actorId as string) || 'local';
   const conversationId = (req.query.sessionId as string) || 'default';
   const profile = store.getPersonalityProfile();
-  const digitalIdentity = store.getDigitalIdentitySettings(actorId);
-  const conversationState = store.getConversationContextState(actorId, conversationId);
+  const digitalIdentity = store.getDigitalIdentitySettings(ctx.actorId);
+  const conversationState = store.getConversationContextState(ctx.actorId, conversationId);
   res.json({ profile, digitalIdentity, conversationState });
 });
 
 assistantRoutes.put('/personality', async (req: Request, res: Response) => {
-  const store = await getMemoryStore();
   const body = (req.body || {}) as Record<string, unknown>;
-  const actorId = (body.actorId as string) || 'local';
+  const ctx = await resolveActorOrRespond(req, res, body.actorId as string | undefined);
+  if (!ctx) return;
+  const store = await getMemoryStore();
   const updated = store.savePersonalityProfile(body);
-  const digitalIdentity = store.saveDigitalIdentitySettings(actorId, {
+  const digitalIdentity = store.saveDigitalIdentitySettings(ctx.actorId, {
     ...(body.defaultPersonality ? { defaultPersonality: body.defaultPersonality as any } : {}),
     ...(body.communicationStyle ? { communicationStyle: body.communicationStyle as any } : {}),
     ...(body.answerDetail ? { answerDetail: body.answerDetail as any } : {}),
@@ -311,28 +330,30 @@ assistantRoutes.put('/personality', async (req: Request, res: Response) => {
 });
 
 assistantRoutes.post('/personality/override', async (req: Request, res: Response) => {
-  const store = await getMemoryStore();
   const body = (req.body || {}) as {
     actorId?: string;
     sessionId?: string;
     temporaryPersonality?: string | null;
     temporaryDepth?: string | null;
   };
-  const actorId = body.actorId || 'local';
+  const ctx = await resolveActorOrRespond(req, res, body.actorId);
+  if (!ctx) return;
+  const store = await getMemoryStore();
   const conversationId = body.sessionId || 'default';
-  store.saveConversationContextState(actorId, conversationId, {
+  store.saveConversationContextState(ctx.actorId, conversationId, {
     temporaryPersonality: (body.temporaryPersonality as any) ?? null,
     temporaryDepth: (body.temporaryDepth as any) ?? null,
   });
-  const state = store.getConversationContextState(actorId, conversationId);
+  const state = store.getConversationContextState(ctx.actorId, conversationId);
   res.json({ conversationState: state });
 });
 
 assistantRoutes.delete('/personality/override', async (req: Request, res: Response) => {
+  const ctx = await resolveActorOrRespond(req, res, req.query.actorId as string | undefined);
+  if (!ctx) return;
   const store = await getMemoryStore();
-  const actorId = (req.query.actorId as string) || 'local';
   const conversationId = (req.query.sessionId as string) || 'default';
-  store.saveConversationContextState(actorId, conversationId, {
+  store.saveConversationContextState(ctx.actorId, conversationId, {
     temporaryPersonality: null,
     temporaryDepth: null,
   });
@@ -365,8 +386,13 @@ assistantRoutes.get('/audit', async (req: Request, res: Response) => {
   res.json({ logs: store.getAuditLogs(limit) });
 });
 
-assistantRoutes.post('/backup', async (_req: Request, res: Response) => {
+assistantRoutes.post('/backup', async (req: Request, res: Response) => {
   try {
+    const identity = await resolveCallerIdentity(req);
+    if (!identity || !identity.isLocal) {
+      res.status(identity ? 403 : 401).json({ error: 'Forbidden: local owner session required for backup' });
+      return;
+    }
     const store = await getMemoryStore();
     const config = getConfig();
     const backupDir = path.join(path.dirname(config.dbPath), 'backups');
@@ -379,7 +405,12 @@ assistantRoutes.post('/backup', async (_req: Request, res: Response) => {
   }
 });
 
-assistantRoutes.post('/auth/pair-code', (_req: Request, res: Response) => {
+assistantRoutes.post('/auth/pair-code', async (req: Request, res: Response) => {
+  const identity = await resolveCallerIdentity(req);
+  if (!identity || !identity.isLocal) {
+    res.status(identity ? 403 : 401).json({ error: 'Forbidden: local owner session required to generate pairing codes' });
+    return;
+  }
   const result = getAuthService().generatePairingCode();
   res.json(result);
 });

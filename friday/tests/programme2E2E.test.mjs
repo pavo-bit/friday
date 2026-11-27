@@ -8,6 +8,7 @@ import fs from 'node:fs';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'friday-prog2-e2e-'));
 process.env.FRIDAY_DB_PATH = path.join(tmpDir, 'friday-prog2.db');
 process.env.FRIDAY_PORT = '0';
+process.env.FRIDAY_ALLOW_LOCALHOST_RESEARCH = 'true';
 
 // Mock Ollama server so we can test live response, streaming, timeout, failure, and restart recovery
 let ollamaOnline = true;
