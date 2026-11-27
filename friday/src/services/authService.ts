@@ -91,10 +91,17 @@ export class AuthService {
 
     const hash = this.hashToken(token);
     const row = db
-      .prepare(`SELECT * FROM devices WHERE token_hash = ? LIMIT 1`)
+      .prepare(`SELECT * FROM devices WHERE token_hash = ? AND COALESCE(revoked, 0) = 0 LIMIT 1`)
       .get(hash) as Record<string, unknown> | undefined;
 
     if (!row) return null;
+
+    if (row.token_expires_at) {
+      const expiresMs = Date.parse(String(row.token_expires_at));
+      if (!Number.isNaN(expiresMs) && Date.now() > expiresMs) {
+        return null;
+      }
+    }
 
     db.prepare(`UPDATE devices SET last_seen_at = datetime('now') WHERE id = ?`).run(String(row.id));
     return this.mapRow(row);

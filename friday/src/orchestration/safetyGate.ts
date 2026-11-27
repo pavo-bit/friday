@@ -8,6 +8,14 @@ import { createLayerLogger } from '../shared/logger';
 import { getConfig } from '../shared/config';
 import { eventBus } from '../shared/events';
 import {
+  getApprovalStore,
+  BoundApprovalRecord,
+  BoundApprovalStatus,
+  CreateBoundApprovalInput,
+  ResolveBoundApprovalResult,
+  ConsumeBoundApprovalResult,
+} from './approvalStore';
+import {
   Intent,
   ActionType,
   RiskLevel,
@@ -344,6 +352,51 @@ export class SafetyGate {
       risk,
       timestamp: Date.now(),
     });
+  }
+
+  // ---- Phase 4: Persistent Action-Bound Approvals ----
+
+  createBoundApproval(input: CreateBoundApprovalInput): Promise<BoundApprovalRecord> {
+    return getApprovalStore().create(input);
+  }
+
+  getBoundApproval(approvalId: string): Promise<BoundApprovalRecord | null> {
+    return getApprovalStore().getById(approvalId);
+  }
+
+  listBoundApprovals(filter?: {
+    actorId?: string;
+    taskId?: string;
+    status?: BoundApprovalStatus;
+    limit?: number;
+  }): Promise<BoundApprovalRecord[]> {
+    return getApprovalStore().list(filter);
+  }
+
+  resolveBoundApproval(params: {
+    approvalId: string;
+    decision: 'APPROVE' | 'REJECT' | 'CANCEL';
+    actorId: string;
+    resolution?: string;
+  }): Promise<ResolveBoundApprovalResult> {
+    return getApprovalStore().resolve(params);
+  }
+
+  consumeBoundApproval(params: {
+    approvalId: string;
+    taskId: string;
+    stepId: string;
+    capabilityId: string;
+    args: Record<string, unknown>;
+    actorId: string;
+    deviceId: string;
+    permissionScope: string;
+  }): Promise<ConsumeBoundApprovalResult> {
+    return getApprovalStore().consume(params);
+  }
+
+  cancelTaskApprovals(taskId: string): Promise<number> {
+    return getApprovalStore().cancelForTask(taskId);
   }
 }
 

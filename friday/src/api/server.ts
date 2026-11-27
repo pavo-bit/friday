@@ -17,9 +17,16 @@ import { memoryRoutes } from './routes/memory';
 import { healthRoutes } from './routes/health';
 import { assistantRoutes } from './routes/assistant';
 import { taskRoutes } from './routes/tasks';
+import { approvalRoutes } from './routes/approvals';
 import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
+
+interface WsClientMeta {
+  actorId: string;
+  deviceId: string;
+  isLocal: boolean;
+}
 
 /**
  * FridayServer — the HTTP + WebSocket gateway.
@@ -31,7 +38,7 @@ export class FridayServer {
   private app: express.Application;
   private server: http.Server | null = null;
   private wss: WebSocketServer | null = null;
-  private clients: Set<WebSocket> = new Set();
+  private clients: Map<WebSocket, WsClientMeta> = new Map();
 
   constructor() {
     this.app = express();
@@ -125,6 +132,7 @@ export class FridayServer {
     this.app.use('/friday', fridayRoutes);
     this.app.use('/friday/memory', memoryRoutes);
     this.app.use('/friday/tasks', taskRoutes);
+    this.app.use('/friday/approvals', approvalRoutes);
     this.app.use('/friday', healthRoutes);
     this.app.use('/friday', assistantRoutes);
 
@@ -139,21 +147,116 @@ export class FridayServer {
     });
   }
 
-  /** Set up WebSocket for real-time communication */
+  /** Set up WebSocket for real-time communication with Bearer auth & origin validation */
   private setupWebSocket(): void {
     if (!this.server) return;
 
-    this.wss = new WebSocketServer({ server: this.server, path: '/friday/ws' });
+    this.wss = new WebSocketServer({ noServer: true });
 
-    this.wss.on('connection', (ws) => {
-      this.clients.add(ws);
-      log.info(`WebSocket client connected (total: ${this.clients.size})`);
+    this.server.on('upgrade', async (req, socket, head) => {
+      try {
+        const parsedUrl = new URL(req.url || '/', 'http://localhost');
+        if (parsedUrl.pathname !== '/friday/ws') {
+          socket.write('HTTP/1.1 404 Not Found\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+
+        // Never accept bearer tokens in URL query string
+        if (parsedUrl.searchParams.has('token') || parsedUrl.searchParams.has('access_token')) {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+
+        const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1', getConfig().host]);
+        const origin = req.headers.origin;
+        if (origin) {
+          try {
+            const originHost = new URL(origin).hostname;
+            if (!allowedHosts.has(originHost)) {
+              socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+              socket.destroy();
+              return;
+            }
+          } catch {
+            socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+        }
+
+        // Extract bearer token from Authorization header or Sec-WebSocket-Protocol
+        let token = '';
+        const authHeader = req.headers.authorization;
+        if (typeof authHeader === 'string') {
+          if (!authHeader.startsWith('Bearer ')) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+          token = authHeader.slice(7).trim();
+        } else if (typeof req.headers['sec-websocket-protocol'] === 'string') {
+          const protocols = req.headers['sec-websocket-protocol']
+            .split(',')
+            .map((p) => p.trim())
+            .filter(Boolean);
+          const bearerProto = protocols.find((p) => p.startsWith('bearer.'));
+          if (bearerProto) {
+            token = bearerProto.slice('bearer.'.length).trim();
+          }
+        }
+
+        const remoteAddr = req.socket.remoteAddress || '';
+        const hostHeader = String(req.headers.host || '').split(':')[0];
+        const isLocalSocket =
+          (remoteAddr === '127.0.0.1' || remoteAddr === '::1' || remoteAddr === '::ffff:127.0.0.1') &&
+          allowedHosts.has(hostHeader);
+
+        let meta: WsClientMeta;
+        if (token) {
+          const device = await getAuthService().verifyToken(token);
+          if (!device) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+            socket.destroy();
+            return;
+          }
+          meta = { actorId: `device:${device.id}`, deviceId: device.id, isLocal: false };
+        } else if (isLocalSocket && process.env.FRIDAY_REQUIRE_WS_AUTH !== 'true') {
+          const ownerHeader = req.headers['x-friday-owner'];
+          const actorId =
+            typeof ownerHeader === 'string' && ownerHeader.trim() ? ownerHeader.trim() : 'local';
+          meta = { actorId, deviceId: 'local', isLocal: true };
+        } else {
+          socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
+          socket.destroy();
+          return;
+        }
+
+        this.wss!.handleUpgrade(req, socket, head, (ws) => {
+          this.wss!.emit('connection', ws, req, meta);
+        });
+      } catch (err) {
+        log.warn('WebSocket upgrade failed', { error: (err as Error).message });
+        socket.write('HTTP/1.1 500 Internal Server Error\r\n\r\n');
+        socket.destroy();
+      }
+    });
+
+    this.wss.on('connection', (ws: WebSocket, _req: http.IncomingMessage, meta: WsClientMeta) => {
+      const clientMeta: WsClientMeta = meta || { actorId: 'local', deviceId: 'local', isLocal: true };
+      this.clients.set(ws, clientMeta);
+      log.info(`WebSocket client connected: ${clientMeta.actorId} (total: ${this.clients.size})`);
 
       // Send initial system status
       ws.send(
         JSON.stringify({
           type: WsMessageType.SYSTEM_STATUS,
-          payload: { connected: true, timestamp: new Date().toISOString() },
+          payload: {
+            connected: true,
+            actorId: clientMeta.actorId,
+            timestamp: new Date().toISOString(),
+          },
           timestamp: new Date().toISOString(),
         })
       );
@@ -183,11 +286,14 @@ export class FridayServer {
       this.broadcast(message);
     });
 
-    log.info('WebSocket server initialized at /friday/ws');
+    log.info('WebSocket server initialized at /friday/ws (authenticated)');
   }
 
   /** Handle incoming WebSocket messages */
   private handleWsMessage(ws: WebSocket, message: WsMessage): void {
+    const clientMeta = this.clients.get(ws);
+    if (!clientMeta) return;
+
     switch (message.type) {
       case WsMessageType.APPROVAL_RESPONSE: {
         const { requestId, approved } = message.payload as {
@@ -195,8 +301,35 @@ export class FridayServer {
           approved: boolean;
         };
         // Forward to safety gate via dynamic import
-        import('../orchestration/safetyGate').then(({ getSafetyGate }) => {
-          getSafetyGate().processApproval(requestId, approved);
+        import('../orchestration/safetyGate').then(async ({ getSafetyGate }) => {
+          const gate = getSafetyGate();
+          const bound = await gate.getBoundApproval(requestId);
+          if (bound) {
+            const res = await gate.resolveBoundApproval({
+              approvalId: requestId,
+              decision: approved ? 'APPROVE' : 'REJECT',
+              actorId: clientMeta.actorId,
+            });
+            if (res.ok && res.approval?.taskId) {
+              const { getBackgroundOrchestrator } = await import('../orchestration/backgroundOrchestrator');
+              if (approved) {
+                await getBackgroundOrchestrator().resumeAfterApproval(
+                  res.approval.taskId,
+                  res.approval.approvalId,
+                  clientMeta.actorId
+                );
+              } else if (res.approval.stepId) {
+                await getBackgroundOrchestrator().handleApprovalOutcome(
+                  res.approval.taskId,
+                  res.approval.stepId,
+                  'REJECTED',
+                  'Rejected via WebSocket'
+                );
+              }
+            }
+          } else {
+            gate.processApproval(requestId, approved);
+          }
         });
         break;
       }
@@ -223,13 +356,33 @@ export class FridayServer {
     }
   }
 
-  /** Broadcast a message to all connected WebSocket clients */
+  /** Broadcast a message to authorized connected WebSocket clients */
   broadcast(message: WsMessage): void {
+    const payloadObj =
+      message.payload && typeof message.payload === 'object'
+        ? (message.payload as Record<string, unknown>)
+        : null;
+    const targetOwnerId =
+      typeof payloadObj?.ownerId === 'string'
+        ? payloadObj.ownerId
+        : typeof payloadObj?.actorId === 'string'
+          ? payloadObj.actorId
+          : null;
+
     const data = JSON.stringify(message);
-    for (const client of this.clients) {
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(data);
+    for (const [client, meta] of this.clients.entries()) {
+      if (client.readyState !== WebSocket.OPEN) continue;
+
+      if (
+        (message.type === WsMessageType.TASK_EVENT || message.type === WsMessageType.APPROVAL_NEEDED) &&
+        targetOwnerId
+      ) {
+        if (meta.actorId !== targetOwnerId) {
+          continue;
+        }
       }
+
+      client.send(data);
     }
   }
 
@@ -275,7 +428,7 @@ export class FridayServer {
   async stop(): Promise<void> {
     return new Promise((resolve) => {
       // Close all WebSocket connections
-      for (const client of this.clients) {
+      for (const client of this.clients.keys()) {
         client.close();
       }
       this.clients.clear();

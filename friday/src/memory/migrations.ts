@@ -244,6 +244,39 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_task_events_created ON task_events(created_at);
     `,
   },
+  {
+    version: 4,
+    name: 'persistent_capability_approvals_and_device_revocation',
+    sql: `
+      ALTER TABLE devices ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE devices ADD COLUMN token_expires_at TEXT;
+
+      CREATE TABLE IF NOT EXISTS capability_approvals (
+        approval_id TEXT PRIMARY KEY,
+        task_id TEXT,
+        step_id TEXT,
+        capability_id TEXT NOT NULL,
+        action_hash TEXT NOT NULL,
+        arguments_hash TEXT NOT NULL,
+        actor_id TEXT NOT NULL,
+        device_id TEXT NOT NULL,
+        permission_scope TEXT NOT NULL,
+        risk_level TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING',
+        summary TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL,
+        resolved_at TEXT,
+        resolution TEXT,
+        resolved_by TEXT,
+        consumed_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_approvals_task_step ON capability_approvals(task_id, step_id);
+      CREATE INDEX IF NOT EXISTS idx_approvals_status_expires ON capability_approvals(status, expires_at);
+      CREATE INDEX IF NOT EXISTS idx_approvals_actor ON capability_approvals(actor_id);
+    `,
+  },
 ];
 
 /**

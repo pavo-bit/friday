@@ -9,7 +9,7 @@
     "dev": "ts-node src/index.ts",
     "start": "node dist/index.js",
     "ui": "node -e \"require('child_process').exec('start http://localhost:3141')\"",
-    "test": "npm run build && node --test tests/friday.test.mjs tests/capabilityRegistry.test.mjs tests/capabilityDiscovery.test.mjs tests/toolPlanner.test.mjs tests/backgroundOrchestrator.test.mjs"
+    "test": "npm run build && node --test tests/friday.test.mjs tests/capabilityRegistry.test.mjs tests/capabilityDiscovery.test.mjs tests/toolPlanner.test.mjs tests/backgroundOrchestrator.test.mjs tests/securityApprovals.test.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^13.2.0",

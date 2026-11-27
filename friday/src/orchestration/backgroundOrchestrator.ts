@@ -12,6 +12,7 @@ import { WsMessageType } from '../shared/types';
 import { createLayerLogger } from '../shared/logger';
 import { ExecutionPlan, ExecutionPlanStep } from './toolPlanner';
 import { CapabilityRegistry, CapabilityResult, getCapabilityRegistry } from './toolRegistry';
+import { getSafetyGate } from './safetyGate';
 
 const log = createLayerLogger('BackgroundOrchestrator');
 
@@ -65,7 +66,7 @@ const TERMINAL_TASK_STATES = new Set<BackgroundTaskStatus>([
 export const ALLOWED_TASK_TRANSITIONS: Record<BackgroundTaskStatus, Set<BackgroundTaskStatus>> = {
   RECEIVED: new Set(['QUEUED', 'WAITING_FOR_APPROVAL', 'CANCELLED', 'FAILED']),
   QUEUED: new Set(['RUNNING', 'WAITING_FOR_APPROVAL', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
-  WAITING_FOR_APPROVAL: new Set(['QUEUED', 'RUNNING', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
+  WAITING_FOR_APPROVAL: new Set(['QUEUED', 'RUNNING', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
   RUNNING: new Set(['VERIFYING', 'WAITING_FOR_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
   VERIFYING: new Set(['COMPLETED', 'FAILED', 'CANCELLED']),
   INTERRUPTED: new Set(['QUEUED', 'FAILED', 'CANCELLED']),
@@ -144,6 +145,7 @@ interface QueuedTaskJob {
   enqueuedAt: number;
   grantedPermissions?: readonly string[];
   approvedHighRisk?: boolean;
+  approvedStepApprovals?: Map<string, string>;
 }
 
 export class TaskConflictError extends Error {
@@ -163,8 +165,14 @@ export class BackgroundOrchestrator {
   };
   private queue: QueuedTaskJob[] = [];
   private cancelledTasks: Set<string> = new Set();
-  private runtimeContexts: Map<string, { grantedPermissions?: readonly string[]; approvedHighRisk?: boolean }> =
-    new Map();
+  private runtimeContexts: Map<
+    string,
+    {
+      grantedPermissions?: readonly string[];
+      approvedHighRisk?: boolean;
+      approvedStepApprovals?: Map<string, string>;
+    }
+  > = new Map();
 
   constructor(
     registry: CapabilityRegistry = getCapabilityRegistry(),
@@ -349,6 +357,8 @@ export class BackgroundOrchestrator {
       errorMessage: 'Cancelled by user.',
     });
 
+    await getSafetyGate().cancelTaskApprovals(taskId);
+
     await this.recordAndEmitEvent(taskId, undefined, 'task.cancelled', {
       taskId,
       conversationId: task.conversationId || undefined,
@@ -359,6 +369,118 @@ export class BackgroundOrchestrator {
     });
 
     return (await this.getTask(taskId, ownerId))!;
+  }
+
+  /**
+   * Resume a task that is WAITING_FOR_APPROVAL after its bound approval was APPROVED.
+   */
+  async resumeAfterApproval(
+    taskId: string,
+    approvalId: string,
+    actorId: string
+  ): Promise<{ resumed: boolean; reason?: string }> {
+    const task = await this.getTask(taskId, actorId);
+    if (!task) {
+      return { resumed: false, reason: 'Task not found or owned by another actor' };
+    }
+    if (task.status !== 'WAITING_FOR_APPROVAL') {
+      return { resumed: false, reason: `Task is ${task.status}, not WAITING_FOR_APPROVAL` };
+    }
+
+    const approval = await getSafetyGate().getBoundApproval(approvalId);
+    if (!approval || approval.taskId !== taskId || approval.actorId !== actorId) {
+      return { resumed: false, reason: 'Approval does not belong to this task or actor' };
+    }
+    if (approval.status !== 'APPROVED') {
+      return { resumed: false, reason: `Approval status is ${approval.status}, expected APPROVED` };
+    }
+
+    const store = await getMemoryStore();
+    const db = store.getDatabase();
+    if (!db) return { resumed: false, reason: 'Database unavailable' };
+
+    if (approval.stepId) {
+      db.prepare(
+        `UPDATE task_steps
+         SET status = 'PENDING', error_code = NULL, error_message = NULL
+         WHERE task_id = ? AND step_id = ? AND status = 'WAITING_FOR_APPROVAL'`
+      ).run(taskId, approval.stepId);
+    }
+
+    await this.transitionTask(taskId, 'QUEUED');
+
+    const prevCtx = this.runtimeContexts.get(taskId) || {};
+    const approvedStepApprovals = new Map(prevCtx.approvedStepApprovals || []);
+    if (approval.stepId) {
+      approvedStepApprovals.set(approval.stepId, approvalId);
+    }
+
+    this.runtimeContexts.set(taskId, {
+      ...prevCtx,
+      approvedStepApprovals,
+    });
+
+    this.enqueueJob({
+      taskId,
+      taskClass: task.taskClass,
+      priority: task.priority,
+      enqueuedAt: Date.now(),
+      grantedPermissions: prevCtx.grantedPermissions,
+      approvedHighRisk: false, // Never grant blanket high-risk; consumed per bound step
+      approvedStepApprovals,
+    });
+
+    return { resumed: true };
+  }
+
+  /**
+   * Handle rejection, expiration, or cancellation of a waiting step's approval.
+   */
+  async handleApprovalOutcome(
+    taskId: string,
+    stepId: string,
+    outcome: 'REJECTED' | 'EXPIRED' | 'CANCELLED',
+    reason: string
+  ): Promise<void> {
+    const task = await this.getTask(taskId);
+    if (!task || TERMINAL_TASK_STATES.has(task.status)) return;
+
+    const store = await getMemoryStore();
+    const db = store.getDatabase();
+    const stepStatus: TaskStepStatus = outcome === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+    const nextTaskStatus: BackgroundTaskStatus = outcome === 'CANCELLED' ? 'CANCELLED' : 'FAILED';
+
+    if (db) {
+      db.prepare(
+        `UPDATE task_steps
+         SET status = ?, error_code = ?, error_message = ?, completed_at = datetime('now')
+         WHERE task_id = ? AND step_id = ? AND status = 'WAITING_FOR_APPROVAL'`
+      ).run(stepStatus, `APPROVAL_${outcome}`, redactSecrets(reason), taskId, stepId);
+
+      db.prepare(
+        `UPDATE task_steps SET status = 'SKIPPED' WHERE task_id = ? AND status IN ('PENDING', 'QUEUED')`
+      ).run(taskId);
+    }
+
+    await this.transitionTask(taskId, nextTaskStatus, {
+      errorCode: `APPROVAL_${outcome}`,
+      errorMessage: redactSecrets(reason),
+    });
+
+    await this.recordAndEmitEvent(
+      taskId,
+      stepId,
+      outcome === 'CANCELLED' ? 'task.cancelled' : 'task.failed',
+      {
+        taskId,
+        conversationId: task.conversationId || undefined,
+        stepId,
+        status: nextTaskStatus,
+        progress: task.progress,
+        timestamp: new Date().toISOString(),
+        summary: reason,
+      }
+    );
   }
 
   /**
@@ -574,6 +696,7 @@ export class BackgroundOrchestrator {
             this.executeStep(task, step, {
               grantedPermissions: job.grantedPermissions,
               approvedHighRisk: job.approvedHighRisk,
+              approvedStepApprovals: job.approvedStepApprovals,
               isTimedOut: () => taskTimedOut,
             })
           )
@@ -582,6 +705,12 @@ export class BackgroundOrchestrator {
         if (this.cancelledTasks.has(task.id)) return;
         if (taskTimedOut) {
           await this.handleTaskTimeout(task);
+          return;
+        }
+
+        const waitingStep = stepResults.find((r) => r.waitingApproval);
+        if (waitingStep) {
+          // Task is paused in WAITING_FOR_APPROVAL; preserve completed and pending steps
           return;
         }
 
@@ -661,9 +790,18 @@ export class BackgroundOrchestrator {
     ctx: {
       grantedPermissions?: readonly string[];
       approvedHighRisk?: boolean;
+      approvedStepApprovals?: Map<string, string>;
       isTimedOut: () => boolean;
     }
-  ): Promise<{ ok: boolean; stepId: string; message?: string; errorCode?: string; errorMessage?: string }> {
+  ): Promise<{
+    ok: boolean;
+    stepId: string;
+    waitingApproval?: boolean;
+    approvalId?: string;
+    message?: string;
+    errorCode?: string;
+    errorMessage?: string;
+  }> {
     const store = await getMemoryStore();
     const db = store.getDatabase();
     if (!db) return { ok: false, stepId: step.stepId, errorCode: 'DB_UNAVAILABLE', errorMessage: 'DB unavailable' };
@@ -671,7 +809,7 @@ export class BackgroundOrchestrator {
     const stepRow = (await this.getTaskSteps(task.id)).find((s) => s.stepId === step.stepId);
     if (!stepRow) return { ok: false, stepId: step.stepId, errorCode: 'STEP_MISSING', errorMessage: 'Step missing' };
 
-    // Preserve already-completed steps during restart recovery
+    // Preserve already-completed steps during restart recovery or approval resumption
     if (stepRow.status === 'COMPLETED' && stepRow.result) {
       return { ok: true, stepId: step.stepId, message: stepRow.result.message };
     }
@@ -688,6 +826,46 @@ export class BackgroundOrchestrator {
           errorCode: 'DEPENDENCY_FAILED',
           errorMessage: `Dependency "${depId}" did not complete.`,
         };
+      }
+    }
+
+    const actorId = task.ownerId || 'local';
+    const deviceId = actorId.startsWith('device:') ? actorId.slice(7) : 'local';
+    const capMeta = this.registry.get(step.capabilityId);
+    const permissionScope = (capMeta?.permissions || []).slice().sort().join(',') || 'default';
+
+    // If resuming via an explicit bound approval for this step, atomically verify & consume it first
+    let stepApprovedHighRisk = Boolean(ctx.approvedHighRisk);
+    let stepGrantedPermissions = ctx.grantedPermissions;
+    const boundApprovalId = ctx.approvedStepApprovals?.get(step.stepId);
+    if (boundApprovalId) {
+      const consumed = await getSafetyGate().consumeBoundApproval({
+        approvalId: boundApprovalId,
+        taskId: task.id,
+        stepId: step.stepId,
+        capabilityId: step.capabilityId,
+        args: step.arguments,
+        actorId,
+        deviceId,
+        permissionScope,
+      });
+      if (!consumed.ok) {
+        db.prepare(
+          `UPDATE task_steps SET status = 'FAILED', error_code = 'APPROVAL_CONSUMPTION_FAILED', error_message = ?, completed_at = datetime('now') WHERE id = ?`
+        ).run(redactSecrets(consumed.error || 'Approval verification failed'), stepRow.id);
+        return {
+          ok: false,
+          stepId: step.stepId,
+          errorCode: 'APPROVAL_CONSUMPTION_FAILED',
+          errorMessage: consumed.error || 'Approval verification failed',
+        };
+      }
+      ctx.approvedStepApprovals?.delete(step.stepId);
+      stepApprovedHighRisk = true;
+      if (capMeta?.permissions?.length) {
+        stepGrantedPermissions = Array.from(
+          new Set([...(ctx.grantedPermissions || []), ...capMeta.permissions])
+        );
       }
     }
 
@@ -712,10 +890,10 @@ export class BackgroundOrchestrator {
       });
 
       const res = await this.registry.execute(step.capabilityId, step.arguments, {
-        actor: task.ownerId,
+        actor: actorId,
         taskId: task.id,
-        grantedPermissions: ctx.grantedPermissions,
-        approvedHighRisk: ctx.approvedHighRisk,
+        grantedPermissions: stepGrantedPermissions,
+        approvedHighRisk: stepApprovedHighRisk,
       });
       lastRes = res;
 
@@ -737,7 +915,22 @@ export class BackgroundOrchestrator {
       }
 
       if (res.requiresApproval) {
-        db.prepare(`UPDATE task_steps SET status = 'WAITING_FOR_APPROVAL' WHERE id = ?`).run(stepRow.id);
+        const boundApproval = await getSafetyGate().createBoundApproval({
+          taskId: task.id,
+          stepId: step.stepId,
+          capabilityId: step.capabilityId,
+          args: step.arguments,
+          actorId,
+          deviceId,
+          permissionScope,
+          riskLevel: step.riskLevel,
+          summary: res.message || `Approval required for ${step.capabilityName}`,
+        });
+
+        db.prepare(
+          `UPDATE task_steps SET status = 'WAITING_FOR_APPROVAL', error_code = 'APPROVAL_REQUIRED', error_message = ? WHERE id = ?`
+        ).run(redactSecrets(res.message || 'Approval required'), stepRow.id);
+
         await this.transitionTask(task.id, 'WAITING_FOR_APPROVAL');
         await this.recordAndEmitEvent(task.id, step.stepId, 'task.waiting_approval', {
           taskId: task.id,
@@ -746,9 +939,16 @@ export class BackgroundOrchestrator {
           status: 'WAITING_FOR_APPROVAL',
           progress: task.progress,
           timestamp: new Date().toISOString(),
-          summary: res.message,
+          summary: `${res.message} (approvalId: ${boundApproval.approvalId})`,
         });
-        return { ok: false, stepId: step.stepId, errorCode: 'APPROVAL_REQUIRED', errorMessage: res.message };
+        return {
+          ok: false,
+          waitingApproval: true,
+          approvalId: boundApproval.approvalId,
+          stepId: step.stepId,
+          errorCode: 'APPROVAL_REQUIRED',
+          errorMessage: res.message,
+        };
       }
 
       // Only retry if idempotent and attempts remain
@@ -832,16 +1032,23 @@ export class BackgroundOrchestrator {
   ): Promise<void> {
     const store = await getMemoryStore();
     const db = store.getDatabase();
+    let ownerId = 'local';
     if (db) {
       db.prepare(
         `INSERT INTO task_events (id, task_id, step_id, event_type, payload_json) VALUES (?, ?, ?, ?, ?)`
       ).run(uuidv4(), taskId, stepId || null, eventType, redactSecrets(JSON.stringify(payload)));
+      const ownerRow = db.prepare(`SELECT owner_id FROM background_tasks WHERE id = ?`).get(taskId) as
+        | { owner_id?: string }
+        | undefined;
+      if (ownerRow?.owner_id) {
+        ownerId = String(ownerRow.owner_id);
+      }
     }
 
     eventBus.emitEvent(eventType, payload);
     eventBus.emitEvent('ws:broadcast', {
       type: WsMessageType.TASK_EVENT,
-      payload: { eventType, ...payload },
+      payload: { eventType, ownerId, ...payload },
       timestamp: payload.timestamp,
     });
   }

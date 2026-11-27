@@ -14,6 +14,7 @@ import { getCapabilityDiscoveryEngine } from '../../orchestration/capabilityDisc
 import { getToolPlanner, ProposedPlanStepInput } from '../../orchestration/toolPlanner';
 import { getAuthService } from '../../services/authService';
 import { getConfig } from '../../shared/config';
+import { resolveCallerIdentity } from '../authContext';
 
 export const taskRoutes = Router();
 
@@ -21,25 +22,11 @@ export const taskRoutes = Router();
  * Resolve caller owner ID from paired device token or localhost context.
  */
 async function resolveOwnerId(req: Request): Promise<string> {
-  const authHeader = req.get('authorization') || '';
-  if (authHeader.startsWith('Bearer ')) {
-    const device = await getAuthService().verifyToken(authHeader.slice(7).trim());
-    if (device) return `device:${device.id}`;
+  const identity = await resolveCallerIdentity(req);
+  if (!identity) {
+    return 'unauthorized';
   }
-
-  const allowedHosts = new Set(['127.0.0.1', 'localhost', '::1', getConfig().host]);
-  const isLocal =
-    req.ip === '127.0.0.1' ||
-    req.ip === '::1' ||
-    req.ip === '::ffff:127.0.0.1' ||
-    allowedHosts.has(req.hostname);
-
-  if (isLocal) {
-    const headerOwner = req.get('x-friday-owner');
-    return headerOwner && headerOwner.trim() ? headerOwner.trim() : 'local';
-  }
-
-  return 'unauthorized';
+  return identity.actorId;
 }
 
 taskRoutes.post('/', async (req: Request, res: Response) => {
