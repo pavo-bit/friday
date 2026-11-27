@@ -35,7 +35,7 @@ class OnboardingPage extends ConsumerWidget {
               _infoCard(
                 Icons.laptop_mac,
                 'Connected Mode',
-                'Pairs securely with your laptop FRIDAY intelligence host (Ollama + Claw runtime) over LAN or private Tailscale.',
+                'Pairs securely with your laptop FRIDAY intelligence host (OpenRouter + Claw runtime) over LAN or private Tailscale.',
               ),
               const SizedBox(height: 12),
               _infoCard(

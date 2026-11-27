@@ -218,7 +218,7 @@ export class AdaptivePersonalityEngine {
   }
 
   /**
-   * Build the full adaptive system prompt for Ollama Qwen3:4B,
+   * Build the full adaptive system prompt for OpenRouter LLM inference,
    * preserving safety, provenance, and policy boundaries.
    */
   buildAdaptiveSystemPrompt(params: {
@@ -321,7 +321,7 @@ export class AdaptivePersonalityEngine {
   }
 
   /**
-   * Graceful deterministic fallback response when local Ollama is offline,
+   * Graceful deterministic fallback response when OpenRouter is unconfigured or offline,
    * tailored to the active personality and depth instead of failing robotically.
    */
   buildOfflineFallback(params: {
@@ -329,7 +329,7 @@ export class AdaptivePersonalityEngine {
     userName: string;
     selection: PersonalitySelectionResult;
     depth: DepthSelectionResult;
-    ollamaStatusError?: string;
+    providerStatusError?: string;
     projectMemories?: string[];
   }): string {
     const { rawInput, userName, selection, depth, projectMemories = [] } = params;
@@ -341,15 +341,15 @@ export class AdaptivePersonalityEngine {
           projectMemories.length > 0
             ? ` I also remember we've been working around ${projectMemories[0]}.`
             : '';
-        return `I'm right here, ${userName}.${projNote} What's on your mind? (Note: Local Qwen3:4B via Ollama is currently offline, so I'm running on my deterministic core — start Ollama anytime for full open-ended conversation.)`;
+        return `I'm right here, ${userName}.${projNote} What's on your mind? (Note: OpenRouter AI inference is currently unavailable, so I'm running on my deterministic core — configure OPENROUTER_API_KEY and OPENROUTER_MODEL for full open-ended conversation.)`;
       }
     }
 
     if (selection.primaryProfile === 'TEACHER') {
-      return `${userName}, I'd love to walk through "${rawInput}" step by step (${depth.depth} mode), but my local Qwen3:4B reasoning engine on Ollama isn't reachable right now. Start Ollama (\`ollama serve\`) and I'll give you the full structured explanation with examples.`;
+      return `${userName}, I'd love to walk through "${rawInput}" step by step (${depth.depth} mode), but my OpenRouter reasoning provider isn't reachable right now (${params.providerStatusError || 'unavailable'}). Check your OpenRouter configuration and I'll give you the full structured explanation with examples.`;
     }
 
-    return `${userName}, I understood your request under my ${selection.primaryProfile.toLowerCase().replace('_', ' ')} profile, but local Ollama (Qwen3:4B) is currently unreachable (${params.ollamaStatusError || 'offline'}). Deterministic tools, memory, finance, and trading modules remain fully operational.`;
+    return `${userName}, I understood your request under my ${selection.primaryProfile.toLowerCase().replace('_', ' ')} profile, but OpenRouter AI inference is currently unavailable (${params.providerStatusError || 'offline'}). Deterministic tools, memory, finance, and trading modules remain fully operational.`;
   }
 }
 

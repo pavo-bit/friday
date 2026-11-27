@@ -7,7 +7,8 @@ import fs from 'node:fs';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'friday-prompt2-'));
 process.env.FRIDAY_DB_PATH = path.join(tmpDir, 'friday-prompt2.db');
 process.env.FRIDAY_PORT = '0';
-process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:19999/v1';
+process.env.OPENROUTER_API_KEY = '';
+process.env.OPENROUTER_BASE_URL = 'http://127.0.0.1:19999/v1';
 
 const { getMemoryStore } = await import('../dist/memory/store.js');
 const { getAssistantBrain } = await import('../dist/orchestration/assistantBrain.js');

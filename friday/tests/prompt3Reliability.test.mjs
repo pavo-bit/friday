@@ -12,19 +12,19 @@ const corruptBackupPath = path.join(tmpDir, 'friday-corrupt-backup.db');
 process.env.FRIDAY_DB_PATH = dbPath;
 process.env.FRIDAY_PORT = '0';
 
-let ollamaAlive = true;
-const mockOllama = http.createServer((req, res) => {
-  if (!ollamaAlive) {
+let providerAlive = true;
+const mockOpenRouter = http.createServer((req, res) => {
+  if (!providerAlive) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Crashed' }));
+    res.end(JSON.stringify({ error: 'Upstream unavailable' }));
     return;
   }
-  if (req.url === '/api/tags') {
+  if (req.url === '/api/v1/models') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ models: [{ name: 'qwen3:4b' }] }));
+    res.end(JSON.stringify({ data: [{ id: 'openai/gpt-4o-mini' }] }));
     return;
   }
-  if (req.url === '/v1/chat/completions') {
+  if (req.url === '/api/v1/chat/completions') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ choices: [{ message: { content: 'Recovered OK, Boss.' } }] }));
     return;
@@ -32,11 +32,14 @@ const mockOllama = http.createServer((req, res) => {
   res.writeHead(404);
   res.end();
 });
-await new Promise((resolve) => mockOllama.listen(0, '127.0.0.1', resolve));
-process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${mockOllama.address().port}/v1`;
+await new Promise((resolve) => mockOpenRouter.listen(0, '127.0.0.1', resolve));
+process.env.OPENROUTER_API_KEY = 'sk-or-v1-test-mock-key';
+process.env.OPENROUTER_MODEL = 'openai/gpt-4o-mini';
+process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${mockOpenRouter.address().port}/api/v1`;
+process.env.OPENROUTER_MAX_RETRIES = '0';
 
 const { getMemoryStore } = await import('../dist/memory/store.js');
-const { getOllamaClient } = await import('../dist/orchestration/ollamaClient.js');
+const { getOpenRouterProvider } = await import('../dist/ai/providers/OpenRouterProvider.js');
 const { getBackgroundOrchestrator } = await import('../dist/orchestration/backgroundOrchestrator.js');
 const { getToolRegistry } = await import('../dist/orchestration/toolRegistry.js');
 const { getNotificationService } = await import('../dist/services/notificationService.js');
@@ -53,7 +56,7 @@ describe('Prompt 3: Reliability, Recovery, Idempotency & Resource Leak Analysis'
   });
 
   after(async () => {
-    await new Promise((resolve) => mockOllama.close(resolve));
+    await new Promise((resolve) => mockOpenRouter.close(resolve));
     const store = await getMemoryStore();
     store.close();
     try {
@@ -79,14 +82,14 @@ describe('Prompt 3: Reliability, Recovery, Idempotency & Resource Leak Analysis'
     assert.equal(badCheck.ok, false);
   });
 
-  it('2. recovers safely from Ollama crash and SQLite restart', async () => {
-    const ollama = getOllamaClient();
-    ollamaAlive = false;
-    const down = await ollama.chatStream({ messages: [{ role: 'user', content: 'hi' }] });
+  it('2. recovers safely from OpenRouter outage and SQLite restart', async () => {
+    const provider = getOpenRouterProvider();
+    providerAlive = false;
+    const down = await provider.chatStream({ messages: [{ role: 'user', content: 'hi' }] });
     assert.equal(down.ok, false);
 
-    ollamaAlive = true;
-    const diag = await ollama.getDiagnostics();
+    providerAlive = true;
+    const diag = await provider.getDiagnostics();
     assert.equal(diag.reachable, true);
     assert.equal(diag.consecutiveFailures, 0);
 

@@ -224,20 +224,24 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const response = await fetch('/api/health');
       const data = await response.json();
-      const online = data.ollama_online;
-      document.getElementById('engineStatus').textContent = online ? 'Connected' : 'Offline';
+      const online = Boolean(data.ai_online);
+      const configured = Boolean(data.ai_configured);
+      document.getElementById('engineStatus').textContent = online ? 'Connected' : configured ? 'Offline' : 'Unconfigured';
       document.getElementById('engineDetail').textContent = online
-        ? 'Local inference server reachable' : 'Start Ollama to enable AI';
-      document.getElementById('enginePill').textContent = online ? 'ONLINE' : 'OFFLINE';
-      document.getElementById('modelName').textContent = data.model || 'qwen3:4b';
+        ? 'OpenRouter inference reachable'
+        : configured
+          ? 'OpenRouter endpoint unreachable'
+          : 'Set OPENROUTER_API_KEY & OPENROUTER_MODEL';
+      document.getElementById('enginePill').textContent = online ? 'ONLINE' : configured ? 'OFFLINE' : 'UNCONFIGURED';
+      document.getElementById('modelName').textContent = data.model || 'unconfigured';
       document.getElementById('clawStatus').textContent = data.claw_binary ? 'Available' : 'Missing';
       document.getElementById('clawDetail').textContent = data.claw_binary
         ? 'Rust agent binary found' : 'Build with cargo build';
       document.getElementById('clawPill').textContent = data.claw_binary ? 'READY' : 'NOT BUILT';
-      document.getElementById('ollamaAddress').textContent = data.ollama_url || '127.0.0.1:11434';
+      document.getElementById('aiAddress').textContent = data.ai_url || 'openrouter.ai/api/v1';
       document.getElementById('runtimeAddress').textContent = data.claw_binary
         ? 'Rust runtime ready' : 'Rust runtime not found';
-      document.getElementById('ollamaDot').className = online ? 'good' : 'bad';
+      document.getElementById('aiDot').className = online ? 'good' : 'bad';
       document.getElementById('runtimeDot').className = data.claw_binary ? 'good' : 'bad';
     } catch {
       document.getElementById('engineStatus').textContent = 'Unavailable';

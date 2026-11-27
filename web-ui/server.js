@@ -117,25 +117,29 @@ app.post('/api/chat', (req, res) => {
 // ---------------------------------------------------------------------------
 app.get('/api/health', async (_req, res) => {
     const clawExists = fs.existsSync(CLAW_EXE);
-    const ollamaBase = (process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434').replace(/\/v1\/?$/, '').replace(/\/$/, '');
-    const model = process.env.OLLAMA_MODEL || 'qwen3:4b';
-    let ollamaOnline = false;
-    let models = [];
-    try {
-        const response = await fetch(ollamaBase + '/api/tags', { signal: AbortSignal.timeout(2500) });
-        if (response.ok) {
-            const payload = await response.json();
-            models = (payload.models || []).map(item => item.name);
-            ollamaOnline = true;
-        }
-    } catch (_) { /* Ollama is optional until started. */ }
+    const openrouterBase = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+    const model = process.env.OPENROUTER_MODEL || '';
+    const hasKey = Boolean((process.env.OPENROUTER_API_KEY || '').trim());
+    let aiOnline = false;
+    if (hasKey && model) {
+        try {
+            const response = await fetch(openrouterBase + '/models', {
+                headers: { Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+                signal: AbortSignal.timeout(3000)
+            });
+            if (response.ok) {
+                aiOnline = true;
+            }
+        } catch (_) { /* OpenRouter may be unreachable offline. */ }
+    }
     res.json({
-        status: clawExists && ollamaOnline ? 'ok' : 'degraded',
+        status: clawExists && aiOnline ? 'ok' : 'degraded',
         claw_binary: clawExists,
-        ollama_online: ollamaOnline,
-        ollama_url: ollamaBase.replace(/^http:\/\//, ''),
-        model,
-        models,
+        ai_provider: 'openrouter',
+        ai_configured: hasKey && Boolean(model),
+        ai_online: aiOnline,
+        ai_url: openrouterBase.replace(/^https?:\/\//, ''),
+        model: model || 'unconfigured',
         uptime_seconds: Math.floor(process.uptime()),
     });
 });

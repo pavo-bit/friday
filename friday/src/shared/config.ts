@@ -6,6 +6,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { FridayConfig } from './types';
+import { loadAIConfig, validateAIConfig } from '../ai/config/ai.config';
 
 const ROOT = path.resolve(__dirname, '..', '..');
 const CLAW_ROOT = path.resolve(ROOT, '..');
@@ -36,12 +37,18 @@ function detectClawBinary(): string {
  * Applies sensible defaults for all optional values.
  */
 export function loadConfig(): FridayConfig {
+  const ai = loadAIConfig();
   return {
     port: parseInt(process.env.FRIDAY_PORT || '3141', 10),
     host: process.env.FRIDAY_HOST || '127.0.0.1',
     clawBinaryPath: process.env.CLAW_BINARY_PATH || detectClawBinary(),
-    ollamaBaseUrl: process.env.OLLAMA_BASE_URL || 'http://127.0.0.1:11434/v1',
-    ollamaModel: process.env.OLLAMA_MODEL || 'qwen3:4b',
+    openrouterApiKey: ai.apiKey,
+    openrouterModel: ai.model,
+    openrouterBaseUrl: ai.baseUrl,
+    openrouterSiteUrl: ai.siteUrl,
+    openrouterAppName: ai.appName,
+    openrouterTimeoutMs: ai.timeoutMs,
+    openrouterMaxRetries: ai.maxRetries,
 
     // Safety
     rateLimitPerMinute: parseInt(process.env.RATE_LIMIT_PER_MINUTE || '30', 10),
@@ -96,6 +103,16 @@ export function validateConfig(config: FridayConfig): string[] {
   if (config.port < 1 || config.port > 65535) {
     errors.push(`Invalid port: ${config.port}`);
   }
+
+  errors.push(...validateAIConfig({
+    apiKey: config.openrouterApiKey,
+    model: config.openrouterModel,
+    baseUrl: config.openrouterBaseUrl,
+    siteUrl: config.openrouterSiteUrl,
+    appName: config.openrouterAppName,
+    timeoutMs: config.openrouterTimeoutMs,
+    maxRetries: config.openrouterMaxRetries,
+  }));
 
   return errors;
 }

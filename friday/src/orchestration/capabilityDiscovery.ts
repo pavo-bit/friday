@@ -9,7 +9,7 @@ import {
   CapabilityRiskLevel,
   getCapabilityRegistry,
 } from './toolRegistry';
-import { getOllamaClient } from './ollamaClient';
+import { getOpenRouterProvider } from '../ai/providers/OpenRouterProvider';
 import { createLayerLogger } from '../shared/logger';
 
 const log = createLayerLogger('CapabilityDiscovery');
@@ -192,10 +192,10 @@ export class CapabilityDiscoveryEngine {
       }
     }
 
-    // 3. Optional local Ollama discovery fallback for complex multi-step requests
+    // 3. Optional OpenRouter LLM discovery fallback for complex multi-step requests
     let usedLlm = false;
     if (matched.length === 0 && unavailable.length === 0 && input.useLlmFallback !== false) {
-      const llmDiscovered = await this.discoverWithOllama(effectiveText);
+      const llmDiscovered = await this.discoverWithLlm(effectiveText);
       if (llmDiscovered.usedLlm) {
         usedLlm = true;
         for (const item of llmDiscovered.items) {
@@ -447,13 +447,13 @@ export class CapabilityDiscoveryEngine {
       }
     }
 
-    // Ollama status
-    if (/\b(check\s+ollama|ollama\s+status)\b/i.test(lower)) {
-      const cap = this.registry.get('check_ollama_status');
+    // AI Provider status
+    if (/\b(check\s+(?:ai|openrouter|provider)|(?:ai|openrouter|provider)\s+status)\b/i.test(lower)) {
+      const cap = this.registry.get('check_ai_provider_status');
       if (cap && cap.enabled) {
         return {
           capability: cap,
-          matchReason: 'Ollama status check matched check_ollama_status',
+          matchReason: 'AI provider status check matched check_ai_provider_status',
           confidence: 0.95,
           suggestedArguments: {},
           missingInputs: [],
@@ -598,12 +598,12 @@ export class CapabilityDiscoveryEngine {
     }
   }
 
-  private async discoverWithOllama(
+  private async discoverWithLlm(
     text: string
   ): Promise<{ usedLlm: boolean; items: Array<Omit<DiscoveredCapability, 'available'>> }> {
-    const ollama = getOllamaClient();
-    const status = await ollama.checkStatus(800);
-    if (!status.reachable || !status.modelAvailable) {
+    const provider = getOpenRouterProvider();
+    const status = await provider.checkStatus(1_000);
+    if (!status.configured || !status.reachable) {
       return { usedLlm: false, items: [] };
     }
 
@@ -621,7 +621,7 @@ export class CapabilityDiscoveryEngine {
       `User request: ${text}`,
     ].join('\n');
 
-    const res = await ollama.chat({
+    const res = await provider.chat({
       messages: [{ role: 'user', content: prompt }],
       timeoutMs: 8_000,
     });
@@ -643,7 +643,7 @@ export class CapabilityDiscoveryEngine {
         if (!cap || !cap.enabled) continue;
         items.push({
           capability: cap,
-          matchReason: 'Proposed by local Ollama discovery',
+          matchReason: 'Proposed by OpenRouter capability discovery',
           confidence: 0.75,
           suggestedArguments: entry.arguments && typeof entry.arguments === 'object' ? entry.arguments : {},
           missingInputs: [],
@@ -652,7 +652,7 @@ export class CapabilityDiscoveryEngine {
       }
       return { usedLlm: true, items };
     } catch (err) {
-      log.warn('Failed to parse Ollama discovery JSON', { error: (err as Error).message });
+      log.warn('Failed to parse OpenRouter discovery JSON', { error: (err as Error).message });
       return { usedLlm: true, items: [] };
     }
   }

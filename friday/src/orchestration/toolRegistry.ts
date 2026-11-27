@@ -6,7 +6,8 @@
 import { RiskLevel } from '../shared/types';
 import { getMemoryStore } from '../memory/store';
 import { getConfig } from '../shared/config';
-import { getOllamaClient, OllamaToolSchema } from './ollamaClient';
+import { AIToolSchema } from '../ai/providers/AIProvider';
+import { getOpenRouterProvider } from '../ai/providers/OpenRouterProvider';
 import { getMonitoringEngine, MonitorMethod } from '../services/monitoringEngine';
 import { getSchedulerService, RecurrenceType } from '../services/schedulerService';
 import { getLocationService } from '../services/locationService';
@@ -422,7 +423,7 @@ export class CapabilityRegistry {
     return availableList;
   }
 
-  toOllamaSchemas(): OllamaToolSchema[] {
+  toToolSchemas(): AIToolSchema[] {
     return this.listEnabled().map((t) => ({
       type: 'function',
       function: {
@@ -656,7 +657,7 @@ export class CapabilityRegistry {
     this.register({
       id: 'core.system.get_system_status',
       name: 'get_system_status',
-      description: 'Get overall FRIDAY status including Ollama, Claw runtime, active watchers, and pending reminders.',
+      description: 'Get overall FRIDAY status including OpenRouter AI provider, Claw runtime, active watchers, and pending reminders.',
       category: 'system',
       version: '1.0.0',
       riskLevel: 'low',
@@ -664,10 +665,10 @@ export class CapabilityRegistry {
       timeoutMs: 5_000,
       trusted: true,
       inputSchema: { type: 'object', properties: {} },
-      outputSchema: { type: 'object', required: ['ollama', 'clawAvailable', 'activeWatchers', 'pendingReminders'] },
+      outputSchema: { type: 'object', required: ['aiProvider', 'clawAvailable', 'activeWatchers', 'pendingReminders'] },
       execute: async () => {
         const store = await getMemoryStore();
-        const ollama = await getOllamaClient().checkStatus();
+        const aiProvider = await getOpenRouterProvider().checkStatus();
         const bridge = getClawBridge();
         const watchers = await getMonitoringEngine().listWatchers();
         const reminders = await getSchedulerService().listReminders('pending');
@@ -676,14 +677,14 @@ export class CapabilityRegistry {
         return {
           verified: true,
           data: {
-            ollama,
+            aiProvider,
             clawAvailable: bridge.isAvailable(),
             memory: store.getStats(),
             activeWatchers: activeWatchers.length,
             pendingReminders: reminders.length,
             uptimeSeconds: Math.floor(process.uptime()),
           },
-          message: `Ollama: ${ollama.reachable ? 'online' : 'offline'} (${ollama.configuredModel}); Claw runtime: ${
+          message: `OpenRouter: ${aiProvider.reachable ? 'online' : 'offline'} (${aiProvider.configuredModel || 'unconfigured'}); Claw runtime: ${
             bridge.isAvailable() ? 'online' : 'offline'
           }; Active watchers: ${activeWatchers.length}; Pending reminders: ${reminders.length}.`,
         };
@@ -691,27 +692,27 @@ export class CapabilityRegistry {
     });
 
     this.register({
-      id: 'core.system.check_ollama_status',
-      name: 'check_ollama_status',
-      description: 'Check whether the local Ollama server is reachable and if the configured model is installed.',
+      id: 'core.system.check_ai_provider_status',
+      name: 'check_ai_provider_status',
+      description: 'Check whether the OpenRouter AI provider is configured, reachable, and if the configured model is available.',
       category: 'system',
       version: '1.0.0',
       riskLevel: 'low',
       permissions: ['read:status'],
-      timeoutMs: 4_000,
+      timeoutMs: 5_000,
       trusted: true,
       inputSchema: { type: 'object', properties: {} },
       outputSchema: { type: 'object', required: ['reachable', 'baseUrl', 'configuredModel'] },
       execute: async () => {
-        const status = await getOllamaClient().checkStatus();
+        const status = await getOpenRouterProvider().checkStatus();
         return {
           verified: true,
           data: status,
           message: status.reachable
-            ? `Ollama is reachable at ${status.baseUrl}. Configured model "${status.configuredModel}" is ${
-                status.modelAvailable ? 'installed' : 'not installed'
+            ? `OpenRouter is reachable at ${status.baseUrl}. Configured model "${status.configuredModel}" is ${
+                status.modelAvailable ? 'available' : 'not listed'
               }.`
-            : `Ollama is not reachable at ${status.baseUrl} (${status.error || 'connection refused'}).`,
+            : `OpenRouter is not reachable at ${status.baseUrl} (${status.error || 'unavailable'}).`,
         };
       },
     });

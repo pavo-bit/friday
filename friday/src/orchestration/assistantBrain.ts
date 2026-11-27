@@ -1,6 +1,6 @@
 // ============================================================
 // FRIDAY — Assistant Brain
-// Integrates Personality, Memory Context, Ollama Tool Calling,
+// Integrates Personality, Memory Context, OpenRouter Tool Calling,
 // and Deterministic Natural-Language Action Dispatch
 // ============================================================
 
@@ -13,7 +13,11 @@ import { InteractionChannel, PersonalityMetadata } from '../personality/personal
 import { getPersonalIdentityService } from '../identity/identityService';
 import { getProjectContextService } from '../identity/projectContextService';
 import { getContinuousLearningEngine } from '../learning/learningEngine';
-import { getOllamaClient, OllamaChatMessage } from './ollamaClient';
+import { getOpenRouterProvider } from '../ai/providers/OpenRouterProvider';
+import { AIChatMessage } from '../ai/providers/AIProvider';
+import { getModelRouter } from '../ai/orchestration/ModelRouter';
+import { buildBoundedChatMessages, reduceMessagesForOverflow } from '../ai/memory/MemoryManager';
+import { redactSecrets } from '../memory/redaction';
 import { getToolRegistry, ToolExecutionResult } from './toolRegistry';
 import { getCapabilityDiscoveryEngine } from './capabilityDiscovery';
 import { getToolPlanner, ExecutionPlan } from './toolPlanner';
@@ -174,12 +178,12 @@ export class AssistantBrain {
         (w) => w.status === 'active' && (w.health === 'offline' || w.health === 'degraded')
       ).length;
       const pendingReminders = (await getSchedulerService().listReminders('pending')).length;
-      const ollama = await getOllamaClient().checkStatus(1_000);
+      const aiStatus = await getOpenRouterProvider().checkStatus(1_500);
 
       const greetingText = personality.buildGreeting(profile, {
         pendingRemindersCount: pendingReminders,
         unhealthyWatchersCount: unhealthy,
-        allSystemsHealthy: unhealthy === 0 && ollama.reachable,
+        allSystemsHealthy: unhealthy === 0 && aiStatus.reachable,
       });
 
       if (!remainder || remainder.length < 3) {
@@ -647,10 +651,10 @@ export class AssistantBrain {
       };
     }
 
-    // 9. Local Ollama Structured Tool Calling & Natural Conversation Generation (Phase 13)
-    const ollama = getOllamaClient();
-    const ollamaStatus = await ollama.checkStatus(1_200);
-    if (ollamaStatus.reachable && ollamaStatus.modelAvailable) {
+    // 9. OpenRouter Structured Tool Calling & Natural Conversation Generation
+    const provider = getOpenRouterProvider();
+    const aiStatus = await provider.checkStatus(1_500);
+    if (aiStatus.configured && aiStatus.reachable) {
       const systemPrompt = adaptiveEngine.buildAdaptiveSystemPrompt({
         legacyProfile: profile,
         preferredAddress: personalIdentity.preferredAddress,
@@ -666,127 +670,195 @@ export class AssistantBrain {
         },
       });
       const history = boundedCtx.recentMessages;
+      const modelSelection = getModelRouter().selectModel(
+        parsedIntent.action === ActionType.CODE_TASK ? 'coding' : 'general'
+      );
 
-      const messages: OllamaChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        ...history.slice(0, -1).map((h) => ({
-          role: (h.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
-          content: h.content,
-        })),
-        { role: 'user', content: effectiveText },
-      ];
-
-      const chatRes = await ollama.chat({
-        messages,
-        tools: understood.intent === 'knowledge_question' ? undefined : registry.toOllamaSchemas(),
+      let messages: AIChatMessage[] = buildBoundedChatMessages({
+        systemPrompt,
+        history: history.slice(0, -1),
+        userMessage: effectiveText,
+        maxContextTokens: modelSelection.capabilities.maxContextTokens,
       });
 
-      if (chatRes.ok) {
-        if (chatRes.toolCalls.length > 0) {
-          const toolMessages: OllamaChatMessage[] = [...messages];
-          let lastToolResult: ToolExecutionResult | undefined;
+      const allowTools =
+        modelSelection.capabilities.toolCalling && understood.intent !== 'knowledge_question';
+      const toolSchemas = allowTools ? registry.toToolSchemas() : undefined;
 
-          for (const call of chatRes.toolCalls) {
-            const execRes = await registry.execute(call.name, call.arguments, {
-              actor: actorId,
-              approvedHighRisk: false, // Never allow LLM tool proposal to auto-approve high risk
-              grantedPermissions: options?.grantedPermissions,
-              timezone: profile.timezone,
-            });
-            lastToolResult = execRes;
-            toolMessages.push({
+      const MAX_TOOL_ITERATIONS = 5;
+      const seenToolSignatures = new Set<string>();
+      let lastToolResult: ToolExecutionResult | undefined;
+      let finalContent = '';
+      let overflowRetried = false;
+
+      for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        let chatRes = await provider.chat({
+          model: modelSelection.model,
+          messages,
+          tools: toolSchemas,
+        });
+
+        if (!chatRes.ok && chatRes.errorCode === 'CONTEXT_OVERFLOW' && !overflowRetried) {
+          overflowRetried = true;
+          messages = reduceMessagesForOverflow(messages);
+          chatRes = await provider.chat({
+            model: modelSelection.model,
+            messages,
+            tools: toolSchemas,
+          });
+        }
+
+        if (!chatRes.ok) {
+          log.warn('OpenRouter chat call failed', {
+            error: chatRes.error,
+            errorCode: chatRes.errorCode,
+            correlationId: chatRes.correlationId,
+          });
+          break;
+        }
+
+        if (chatRes.toolCalls.length === 0) {
+          finalContent = chatRes.content;
+          break;
+        }
+
+        // Append assistant tool-call turn
+        messages.push({
+          role: 'assistant',
+          content: chatRes.content || '',
+          tool_calls: chatRes.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.arguments),
+            },
+          })),
+        });
+
+        let loopDetected = false;
+        for (const call of chatRes.toolCalls) {
+          const signature = `${call.name}:${JSON.stringify(call.arguments)}`;
+          if (seenToolSignatures.has(signature)) {
+            log.warn('Preventing duplicate tool call loop', { tool: call.name });
+            loopDetected = true;
+            messages.push({
               role: 'tool',
               tool_call_id: call.id,
               content: JSON.stringify({
+                verified: false,
+                error: 'Duplicate tool call detected; summarize current results instead of repeating.',
+              }),
+            });
+            continue;
+          }
+          seenToolSignatures.add(signature);
+
+          const execRes = await registry.execute(call.name, call.arguments, {
+            actor: actorId,
+            approvedHighRisk: false, // Never allow cloud LLM tool proposal to auto-approve high risk
+            grantedPermissions: options?.grantedPermissions,
+            timezone: profile.timezone,
+          });
+          lastToolResult = execRes;
+          messages.push({
+            role: 'tool',
+            tool_call_id: call.id,
+            content: redactSecrets(
+              JSON.stringify({
                 verified: execRes.verified,
                 message: execRes.message,
                 data: execRes.data,
                 error: execRes.error,
-              }),
-            });
-          }
+              })
+            ),
+          });
+        }
 
-          const finalChat = await ollama.chat({ messages: toolMessages });
-          const finalText = finalChat.ok && finalChat.content
-            ? finalChat.content
+        if (loopDetected) {
+          const summaryRes = await provider.chat({ model: modelSelection.model, messages });
+          finalContent = summaryRes.ok && summaryRes.content
+            ? summaryRes.content
             : lastToolResult?.message || 'Done.';
-
-          const voiceSummary =
-            channel === 'voice' || depthSelection.depth === 'DETAILED'
-              ? adaptiveEngine.buildVoiceSummary(finalText, depthSelection.maxVoiceSentences)
-              : undefined;
-
-          const result = await this.finish(
-            intentId,
-            effectiveText,
-            finalText,
-            lastToolResult ? lastToolResult.success : true,
-            'claw',
-            RiskLevel.LOW,
-            startTime,
-            sessionId,
-            actorId,
-            channel
-          );
-          return {
-            ...result,
-            toolResult: lastToolResult,
-            executiveDecision: 'SYNTHESIZE_RESULTS',
-            assistantRequest: understood,
-            personalityMeta: { ...personalityMeta, voiceSummary },
-            timingsMs: {
-              understanding: understandingMs,
-              context: contextMs,
-              planning: Date.now() - tPlanStart,
-              total: Date.now() - startTime,
-            },
-          };
+          break;
         }
+      }
 
-        if (chatRes.content) {
-          const voiceSummary =
-            channel === 'voice' || depthSelection.depth === 'DETAILED'
-              ? adaptiveEngine.buildVoiceSummary(chatRes.content, depthSelection.maxVoiceSentences)
-              : undefined;
+      if (lastToolResult) {
+        const finalText = finalContent || lastToolResult.message || 'Done.';
+        const voiceSummary =
+          channel === 'voice' || depthSelection.depth === 'DETAILED'
+            ? adaptiveEngine.buildVoiceSummary(finalText, depthSelection.maxVoiceSentences)
+            : undefined;
 
-          const res = await this.finish(
-            intentId,
-            effectiveText,
-            chatRes.content,
-            true,
-            'claw',
-            RiskLevel.LOW,
-            startTime,
-            sessionId,
-            actorId,
-            channel
-          );
-          return {
-            ...res,
-            executiveDecision: 'ANSWER_DIRECTLY',
-            assistantRequest: understood,
-            personalityMeta: { ...personalityMeta, voiceSummary },
-            timingsMs: {
-              understanding: understandingMs,
-              context: contextMs,
-              planning: Date.now() - tPlanStart,
-              total: Date.now() - startTime,
-            },
-          };
-        }
-      } else {
-        log.warn('Ollama chat call failed', { error: chatRes.error });
+        const result = await this.finish(
+          intentId,
+          effectiveText,
+          finalText,
+          lastToolResult.success,
+          'claw',
+          RiskLevel.LOW,
+          startTime,
+          sessionId,
+          actorId,
+          channel
+        );
+        return {
+          ...result,
+          toolResult: lastToolResult,
+          executiveDecision: 'SYNTHESIZE_RESULTS',
+          assistantRequest: understood,
+          personalityMeta: { ...personalityMeta, voiceSummary },
+          timingsMs: {
+            understanding: understandingMs,
+            context: contextMs,
+            planning: Date.now() - tPlanStart,
+            total: Date.now() - startTime,
+          },
+        };
+      }
+
+      if (finalContent) {
+        const voiceSummary =
+          channel === 'voice' || depthSelection.depth === 'DETAILED'
+            ? adaptiveEngine.buildVoiceSummary(finalContent, depthSelection.maxVoiceSentences)
+            : undefined;
+
+        const res = await this.finish(
+          intentId,
+          effectiveText,
+          finalContent,
+          true,
+          'claw',
+          RiskLevel.LOW,
+          startTime,
+          sessionId,
+          actorId,
+          channel
+        );
+        return {
+          ...res,
+          executiveDecision: 'ANSWER_DIRECTLY',
+          assistantRequest: understood,
+          personalityMeta: { ...personalityMeta, voiceSummary },
+          timingsMs: {
+            understanding: understandingMs,
+            context: contextMs,
+            planning: Date.now() - tPlanStart,
+            total: Date.now() - startTime,
+          },
+        };
       }
     }
 
-    // 10. Graceful offline guidance tailored to active personality
-    if (!ollamaStatus.reachable) {
+    // 10. Graceful offline/unconfigured guidance tailored to active personality
+    if (!aiStatus.configured || !aiStatus.reachable) {
       const honestMsg = adaptiveEngine.buildOfflineFallback({
         rawInput: effectiveText,
         userName: profile.userName,
         selection: personalitySelection,
         depth: depthSelection,
-        ollamaStatusError: ollamaStatus.error,
+        providerStatusError: aiStatus.error,
         projectMemories: boundedCtx.categorizedMemories.projects,
       });
       const res = await this.finish(
@@ -837,9 +909,9 @@ export class AssistantBrain {
       return { tool: 'get_current_time', args: { timezone } };
     }
 
-    // System / Ollama status
-    if (/\b(check\s+ollama|ollama\s+status)\b/i.test(lower)) {
-      return { tool: 'check_ollama_status', args: {} };
+    // System / AI provider status
+    if (/\b(check\s+(?:ai|openrouter|provider)|(?:ai|openrouter|provider)\s+status)\b/i.test(lower)) {
+      return { tool: 'check_ai_provider_status', args: {} };
     }
     if (/\b(system\s*status|status\s*check|health\s*check|are\s+you\s+(online|working))\b/i.test(lower)) {
       return { tool: 'get_system_status', args: {} };

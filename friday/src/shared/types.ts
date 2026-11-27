@@ -183,8 +183,13 @@ export interface FridayConfig {
   port: number;
   host: string;
   clawBinaryPath: string;
-  ollamaBaseUrl: string;
-  ollamaModel: string;
+  openrouterApiKey: string;
+  openrouterModel: string;
+  openrouterBaseUrl: string;
+  openrouterSiteUrl: string;
+  openrouterAppName: string;
+  openrouterTimeoutMs: number;
+  openrouterMaxRetries: number;
 
   // Safety
   rateLimitPerMinute: number;

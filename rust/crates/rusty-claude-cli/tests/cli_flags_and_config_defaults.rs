@@ -193,10 +193,9 @@ fn doctor_command_runs_as_a_local_shell_entrypoint() {
     fs::create_dir_all(&config_home).expect("config home should exist");
 
     // when
-    let ollama_listener = std::net::TcpListener::bind("127.0.0.1:0").expect("Ollama probe listener");
-    let ollama_url = format!("http://{}/v1", ollama_listener.local_addr().expect("listener address"));
     let output = command_in(&temp_dir)
-        .env("OLLAMA_BASE_URL", &ollama_url)
+        .env("OPENROUTER_API_KEY", "sk-or-v1-test")
+        .env("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
         .env("CLAW_CONFIG_HOME", &config_home)
         .arg("doctor")
         .output()

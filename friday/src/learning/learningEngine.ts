@@ -578,7 +578,7 @@ export class ContinuousLearningEngine {
 
   /**
    * Extension point: export curated, verified records for future human-approved fine-tuning evaluation.
-   * Never autonomously modifies Ollama Qwen3:4B weights.
+   * Never autonomously modifies underlying LLM weights.
    */
   async exportCuratedFineTuneCandidates(actorId: string): Promise<Array<{ prompt: string; completion: string; provenance: string }>> {
     const records = await this.retrieve({ actorId, limit: 50 });

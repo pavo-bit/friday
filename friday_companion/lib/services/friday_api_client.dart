@@ -202,8 +202,8 @@ class FridayApiClient {
         body: {'subject': subject, 'correction': correction});
   }
 
-  Future<Map<String, dynamic>> getOllamaStatus() async {
-    return _request('GET', '/friday/ollama/status');
+  Future<Map<String, dynamic>> getAiStatus() async {
+    return _request('GET', '/friday/ai/status');
   }
 
   void logout() {

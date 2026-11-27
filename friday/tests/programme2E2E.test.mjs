@@ -10,25 +10,25 @@ process.env.FRIDAY_DB_PATH = path.join(tmpDir, 'friday-prog2.db');
 process.env.FRIDAY_PORT = '0';
 process.env.FRIDAY_ALLOW_LOCALHOST_RESEARCH = 'true';
 
-// Mock Ollama server so we can test live response, streaming, timeout, failure, and restart recovery
-let ollamaOnline = true;
-let ollamaSlow = false;
-const mockOllama = http.createServer((req, res) => {
-  if (!ollamaOnline) {
+// Mock OpenRouter server so we can test live response, streaming, timeout, failure, and restart recovery
+let providerOnline = true;
+let providerSlow = false;
+const mockOpenRouter = http.createServer((req, res) => {
+  if (!providerOnline) {
     res.writeHead(503, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ error: 'Ollama service restarting' }));
+    res.end(JSON.stringify({ error: 'OpenRouter upstream unavailable' }));
     return;
   }
-  if (req.url === '/api/tags') {
+  if (req.url === '/api/v1/models') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ models: [{ name: 'qwen3:4b' }] }));
+    res.end(JSON.stringify({ data: [{ id: 'openai/gpt-4o-mini' }] }));
     return;
   }
-  if (req.url === '/v1/chat/completions') {
+  if (req.url === '/api/v1/chat/completions') {
     let body = '';
     req.on('data', (c) => (body += c));
     req.on('end', () => {
-      if (ollamaSlow) {
+      if (providerSlow) {
         setTimeout(() => {
           if (!res.writableEnded) {
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -55,6 +55,7 @@ const mockOllama = http.createServer((req, res) => {
               },
             },
           ],
+          usage: { prompt_tokens: 12, completion_tokens: 9, total_tokens: 21 },
         })
       );
     });
@@ -64,13 +65,15 @@ const mockOllama = http.createServer((req, res) => {
   res.end();
 });
 
-await new Promise((resolve) => mockOllama.listen(0, '127.0.0.1', resolve));
-const ollamaPort = mockOllama.address().port;
-process.env.OLLAMA_BASE_URL = `http://127.0.0.1:${ollamaPort}/v1`;
-process.env.OLLAMA_MODEL = 'qwen3:4b';
+await new Promise((resolve) => mockOpenRouter.listen(0, '127.0.0.1', resolve));
+const mockPort = mockOpenRouter.address().port;
+process.env.OPENROUTER_API_KEY = 'sk-or-v1-test-mock-key';
+process.env.OPENROUTER_BASE_URL = `http://127.0.0.1:${mockPort}/api/v1`;
+process.env.OPENROUTER_MODEL = 'openai/gpt-4o-mini';
+process.env.OPENROUTER_MAX_RETRIES = '0';
 
 const { getMemoryStore } = await import('../dist/memory/store.js');
-const { getOllamaClient } = await import('../dist/orchestration/ollamaClient.js');
+const { getOpenRouterProvider } = await import('../dist/ai/providers/OpenRouterProvider.js');
 const { getAssistantBrain } = await import('../dist/orchestration/assistantBrain.js');
 const { getPersonalIdentityService } = await import('../dist/identity/identityService.js');
 const { getProjectContextService } = await import('../dist/identity/projectContextService.js');
@@ -127,7 +130,7 @@ describe('Programme 2 (Phases 17–19): Conversation, Cross-Device Identity, Sec
   after(async () => {
     getMonitoringEngine().stopAll();
     await apiServer?.stop();
-    await new Promise((resolve) => mockOllama.close(resolve));
+    await new Promise((resolve) => mockOpenRouter.close(resolve));
     await new Promise((resolve) => webMockServer.close(resolve));
     await new Promise((resolve) => monServer.close(resolve));
     const store = await getMemoryStore();
@@ -139,17 +142,17 @@ describe('Programme 2 (Phases 17–19): Conversation, Cross-Device Identity, Sec
     }
   });
 
-  describe('Phase 17: Live Ollama Validation, Streaming, Timeout & Offline Recovery', () => {
-    it('validates Qwen3:4B availability, streaming, timeout, failure, and restart recovery', async () => {
-      const ollama = getOllamaClient();
-      const diag1 = await ollama.getDiagnostics();
+  describe('Phase 17: OpenRouter Validation, Streaming, Timeout & Offline Recovery', () => {
+    it('validates OpenRouter availability, streaming, timeout, failure, and restart recovery', async () => {
+      const provider = getOpenRouterProvider();
+      const diag1 = await provider.getDiagnostics();
       assert.equal(diag1.reachable, true);
       assert.equal(diag1.modelAvailable, true);
       assert.ok(diag1.processRssMb > 0);
 
       // Streaming test
       let streamedTokens = '';
-      const streamRes = await ollama.chatStream({
+      const streamRes = await provider.chatStream({
         messages: [{ role: 'user', content: 'Say hi' }],
         onToken: (t) => (streamedTokens += t),
       });
@@ -157,22 +160,22 @@ describe('Programme 2 (Phases 17–19): Conversation, Cross-Device Identity, Sec
       assert.equal(streamedTokens, 'Hello Boss!');
 
       // Timeout handling
-      ollamaSlow = true;
-      const timeoutRes = await ollama.chatStream({
+      providerSlow = true;
+      const timeoutRes = await provider.chatStream({
         messages: [{ role: 'user', content: 'Slow query' }],
         timeoutMs: 250,
       });
       assert.equal(timeoutRes.ok, false);
       assert.ok(/timed out/i.test(timeoutRes.error || ''));
-      ollamaSlow = false;
+      providerSlow = false;
 
       // Unavailable & restart recovery
-      ollamaOnline = false;
-      const downDiag = await ollama.getDiagnostics();
+      providerOnline = false;
+      const downDiag = await provider.getDiagnostics();
       assert.equal(downDiag.reachable, false);
 
-      ollamaOnline = true;
-      const upDiag = await ollama.getDiagnostics();
+      providerOnline = true;
+      const upDiag = await provider.getDiagnostics();
       assert.equal(upDiag.reachable, true);
       assert.equal(upDiag.consecutiveFailures, 0);
     });
@@ -344,8 +347,8 @@ describe('Programme 2 (Phases 17–19): Conversation, Cross-Device Identity, Sec
       );
       assert.ok(androidRes.output);
 
-      // Simulate Ollama offline + SQLite restart recovery
-      ollamaOnline = false;
+      // Simulate OpenRouter offline + SQLite restart recovery
+      providerOnline = false;
       const store = await getMemoryStore();
       store.close();
       await store.initialize();
@@ -357,7 +360,7 @@ describe('Programme 2 (Phases 17–19): Conversation, Cross-Device Identity, Sec
         channel: 'android',
       });
       assert.equal(offlineRes.success, false); // Honest failure, never fabricated
-      ollamaOnline = true;
+      providerOnline = true;
     });
   });
 });

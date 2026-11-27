@@ -26,7 +26,7 @@ test('All 18 existing built-in tools are registered, enabled, and discoverable',
   const expectedTools = [
     'get_current_time',
     'get_system_status',
-    'check_ollama_status',
+    'check_ai_provider_status',
     'check_server_health',
     'create_reminder',
     'create_alarm',

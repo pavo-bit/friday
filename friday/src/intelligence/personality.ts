@@ -166,7 +166,7 @@ export class PersonalityEngine {
   }
 
   /**
-   * Build the dynamic system prompt injected into Ollama calls.
+   * Build the dynamic system prompt injected into OpenRouter LLM calls.
    */
   buildSystemPrompt(profile: PersonalityProfile, contextSummary?: string): string {
     const toneRules = [

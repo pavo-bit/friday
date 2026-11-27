@@ -168,7 +168,7 @@ class DashboardPage extends ConsumerWidget {
                 Icons.chat_bubble_outline,
                 'Assistant',
                 conn.isConnected
-                    ? 'Local Ollama ready'
+                    ? 'OpenRouter AI ready'
                     : 'Cached (${messages.length} msgs)',
                 () => context.push('/assistant'),
               ),

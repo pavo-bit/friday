@@ -13,7 +13,7 @@ import { getNotificationService } from '../../services/notificationService';
 import { getAuthService } from '../../services/authService';
 import { getMemoryStore } from '../../memory/store';
 import { getToolRegistry } from '../../orchestration/toolRegistry';
-import { getOllamaClient } from '../../orchestration/ollamaClient';
+import { getOpenRouterProvider } from '../../ai/providers/OpenRouterProvider';
 import { getConfig } from '../../shared/config';
 import { resolveActorOrRespond, resolveCallerIdentity } from '../authContext';
 
@@ -360,8 +360,8 @@ assistantRoutes.delete('/personality/override', async (req: Request, res: Respon
   res.json({ cleared: true });
 });
 
-assistantRoutes.get('/ollama/status', async (_req: Request, res: Response) => {
-  const status = await getOllamaClient().getDiagnostics();
+assistantRoutes.get('/ai/status', async (_req: Request, res: Response) => {
+  const status = await getOpenRouterProvider().getDiagnostics();
   res.json(status);
 });
 

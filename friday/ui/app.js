@@ -151,14 +151,14 @@
   // Loaders
   async function loadHealth() {
     try {
-      const [health, ollama] = await Promise.all([api('/friday/health'), api('/friday/ollama/status')]);
+      const [health, aiStatus] = await Promise.all([api('/friday/health'), api('/friday/ai/status')]);
       document.getElementById('statUptime').textContent = `Uptime: ${health.uptime_seconds}s`;
-      document.getElementById('statModel').textContent = ollama.configuredModel || 'qwen3:4b';
-      document.getElementById('sidebarModel').textContent = `Model: ${ollama.configuredModel || 'qwen3:4b'}`;
+      document.getElementById('statModel').textContent = aiStatus.configuredModel || 'Unconfigured';
+      document.getElementById('sidebarModel').textContent = `Model: ${aiStatus.configuredModel || 'Unconfigured'}`;
 
-      const ollamaChip = document.getElementById('chipOllama');
-      ollamaChip.textContent = `Ollama: ${ollama.reachable ? 'Online' : 'Offline'}`;
-      ollamaChip.className = `chip ${ollama.reachable ? 'ok' : 'err'}`;
+      const aiChip = document.getElementById('chipAiProvider');
+      aiChip.textContent = `OpenRouter: ${aiStatus.reachable ? 'Online' : aiStatus.configured ? 'Offline' : 'Unconfigured'}`;
+      aiChip.className = `chip ${aiStatus.reachable ? 'ok' : 'err'}`;
 
       const clawChip = document.getElementById('chipClaw');
       const clawOnline = health.subsystems?.claw?.exists;

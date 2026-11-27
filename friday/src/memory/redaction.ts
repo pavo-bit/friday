@@ -5,7 +5,7 @@
 
 const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   { pattern: /\b(Bearer\s+)[A-Za-z0-9\-._~+/]+=*/gi, replacement: '$1[REDACTED]' },
-  { pattern: /\b(sk-[A-Za-z0-9_-]{8,})\b/g, replacement: '[REDACTED_KEY]' },
+  { pattern: /\b(sk-or-v1-[A-Za-z0-9_-]{8,}|sk-[A-Za-z0-9_-]{8,})\b/g, replacement: '[REDACTED_KEY]' },
   { pattern: /\b(ghp_[A-Za-z0-9]{10,}|github_pat_[A-Za-z0-9_]{10,})\b/g, replacement: '[REDACTED_TOKEN]' },
   {
     pattern: /((?:password|passwd|pwd|secret|token|api[_-]?key|auth[_-]?token)\s*[:=]\s*["']?)([^\s"',;]+)/gi,

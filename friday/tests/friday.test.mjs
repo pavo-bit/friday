@@ -86,7 +86,7 @@ test('ToolRegistry: all required tools registered, validation, and execution', a
   const requiredTools = [
     'get_current_time',
     'get_system_status',
-    'check_ollama_status',
+    'check_ai_provider_status',
     'check_server_health',
     'create_reminder',
     'create_alarm',

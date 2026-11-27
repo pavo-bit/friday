@@ -52,7 +52,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use tools::{GlobalToolRegistry, RuntimeToolDefinition, ToolSearchOutput};
 
-const DEFAULT_MODEL: &str = "qwen3:4b";
+const DEFAULT_MODEL: &str = "openrouter/auto";
 fn max_tokens_for_model(model: &str) -> u32 {
     if model.contains("qwen") {
         8_192
@@ -274,7 +274,7 @@ impl CliOutputFormat {
 
 #[allow(clippy::too_many_lines)]
 fn parse_args(args: &[String]) -> Result<CliAction, String> {
-    let mut model = env::var("OLLAMA_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
+    let mut model = env::var("OPENROUTER_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     let mut output_format = CliOutputFormat::Text;
     let mut permission_mode_override = None;
     let mut wants_help = false;
@@ -1100,36 +1100,24 @@ fn run_doctor(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::
 
 #[allow(clippy::too_many_lines)]
 fn check_auth_health() -> DiagnosticCheck {
-    let base_url = env::var("OLLAMA_BASE_URL")
-        .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string());
-    let authority = base_url
-        .strip_prefix("http://")
-        .or_else(|| base_url.strip_prefix("https://"))
-        .unwrap_or(&base_url)
-        .split('/')
-        .next()
-        .unwrap_or("127.0.0.1:11434");
-    let available = authority
-        .to_socket_addrs()
+    let base_url = env::var("OPENROUTER_BASE_URL")
+        .unwrap_or_else(|_| "https://openrouter.ai/api/v1".to_string());
+    let has_key = env::var("OPENROUTER_API_KEY")
         .ok()
-        .is_some_and(|addresses| {
-            addresses.into_iter().any(|address| {
-                TcpStream::connect_timeout(&address, Duration::from_millis(500)).is_ok()
-            })
-        });
+        .is_some_and(|v| !v.trim().is_empty());
+    let model = env::var("OPENROUTER_MODEL").unwrap_or_else(|_| DEFAULT_MODEL.to_string());
     DiagnosticCheck::new(
-        "Ollama",
-        if available { DiagnosticLevel::Ok } else { DiagnosticLevel::Fail },
-        if available {
-            "local Ollama server is reachable"
+        "OpenRouter",
+        if has_key { DiagnosticLevel::Ok } else { DiagnosticLevel::Fail },
+        if has_key {
+            "OPENROUTER_API_KEY is configured"
         } else {
-            "Ollama is not reachable; start it with `ollama serve`"
+            "OPENROUTER_API_KEY is missing; set it in .env or environment"
         },
     )
     .with_details(vec![
         format!("Endpoint: {base_url}"),
-        "No provider API key is used for local inference".to_string(),
-        "Default model: qwen3:4b".to_string(),
+        format!("Configured model: {model}"),
     ])
 }
 
@@ -1464,15 +1452,15 @@ fn print_bootstrap_plan(output_format: CliOutputFormat) -> Result<(), Box<dyn st
 }
 
 fn run_login(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::Error>> {
-    let message = "FRIDAY uses local Ollama. No account login or API credentials are required.";
+    let message = "FRIDAY uses OpenRouter via OPENROUTER_API_KEY in backend environment configuration.";
     match output_format {
         CliOutputFormat::Text => println!("{message}"),
         CliOutputFormat::Json => println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "kind": "login",
-                "provider": "ollama",
-                "required": false,
+                "provider": "openrouter",
+                "required": true,
                 "message": message,
             }))?
         ),
@@ -1481,14 +1469,14 @@ fn run_login(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::E
 }
 
 fn run_logout(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::Error>> {
-    let message = "FRIDAY uses local Ollama. There are no provider credentials to clear.";
+    let message = "Remove OPENROUTER_API_KEY from your environment or .env to clear OpenRouter credentials.";
     match output_format {
         CliOutputFormat::Text => println!("{message}"),
         CliOutputFormat::Json => println!(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "kind": "logout",
-                "provider": "ollama",
+                "provider": "openrouter",
                 "message": message,
             }))?
         ),
@@ -2280,7 +2268,7 @@ struct RuntimeMcpState {
 }
 
 struct BuiltRuntime {
-    runtime: Option<ConversationRuntime<OllamaRuntimeClient, CliToolExecutor>>,
+    runtime: Option<ConversationRuntime<OpenRouterRuntimeClient, CliToolExecutor>>,
     plugin_registry: PluginRegistry,
     plugins_active: bool,
     mcp_state: Option<Arc<Mutex<RuntimeMcpState>>>,
@@ -2289,7 +2277,7 @@ struct BuiltRuntime {
 
 impl BuiltRuntime {
     fn new(
-        runtime: ConversationRuntime<OllamaRuntimeClient, CliToolExecutor>,
+        runtime: ConversationRuntime<OpenRouterRuntimeClient, CliToolExecutor>,
         plugin_registry: PluginRegistry,
         mcp_state: Option<Arc<Mutex<RuntimeMcpState>>>,
     ) -> Self {
@@ -2334,7 +2322,7 @@ impl BuiltRuntime {
 }
 
 impl Deref for BuiltRuntime {
-    type Target = ConversationRuntime<OllamaRuntimeClient, CliToolExecutor>;
+    type Target = ConversationRuntime<OpenRouterRuntimeClient, CliToolExecutor>;
 
     fn deref(&self) -> &Self::Target {
         self.runtime
@@ -5216,7 +5204,7 @@ fn build_runtime_with_plugin_state(
         .map_err(std::io::Error::other)?;
     let mut runtime = ConversationRuntime::new_with_features(
         session,
-        OllamaRuntimeClient::new(
+        OpenRouterRuntimeClient::new(
             session_id,
             model,
             enable_tools,
@@ -5323,7 +5311,7 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
     }
 }
 
-struct OllamaRuntimeClient {
+struct OpenRouterRuntimeClient {
     runtime: tokio::runtime::Runtime,
     client: OpenAiCompatClient,
     session_id: String,
@@ -5335,7 +5323,7 @@ struct OllamaRuntimeClient {
     progress_reporter: Option<InternalPromptProgressReporter>,
 }
 
-impl OllamaRuntimeClient {
+impl OpenRouterRuntimeClient {
     fn new(
         session_id: &str,
         model: String,
@@ -5347,7 +5335,7 @@ impl OllamaRuntimeClient {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         Ok(Self {
             runtime: tokio::runtime::Runtime::new()?,
-            client: OpenAiCompatClient::new("", OpenAiCompatConfig::ollama()),
+            client: OpenAiCompatClient::from_env(OpenAiCompatConfig::openrouter())?,
             session_id: session_id.to_string(),
             model,
             enable_tools,
@@ -5359,7 +5347,7 @@ impl OllamaRuntimeClient {
     }
 }
 
-impl ApiClient for OllamaRuntimeClient {
+impl ApiClient for OpenRouterRuntimeClient {
     #[allow(clippy::too_many_lines)]
     fn stream(&mut self, request: ApiRequest) -> Result<Vec<AssistantEvent>, RuntimeError> {
         if let Some(progress_reporter) = &self.progress_reporter {
@@ -5373,7 +5361,7 @@ impl ApiClient for OllamaRuntimeClient {
             tools: self
                 .enable_tools
                 .then(|| filter_tool_specs(&self.tool_registry, self.allowed_tools.as_ref())),
-            tool_choice: None, // Ollama supports function tools but does not implement tool_choice.
+            tool_choice: None, // OpenRouter tool_choice is optional; omit for broad model compatibility.
             stream: true,
         };
 

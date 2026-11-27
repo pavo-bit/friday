@@ -64,14 +64,14 @@ async fn send_message_uses_openai_compatible_endpoint_and_auth() {
 }
 
 #[tokio::test]
-async fn ollama_requests_do_not_send_an_authorization_header() {
+async fn openrouter_requests_send_bearer_authorization_header() {
     let state = Arc::new(Mutex::new(Vec::<CapturedRequest>::new()));
     let body = concat!(
         "{",
-        "\"id\":\"chatcmpl_ollama\",",
-        "\"model\":\"qwen3:4b\",",
+        "\"id\":\"chatcmpl_openrouter\",",
+        "\"model\":\"openai/gpt-4o-mini\",",
         "\"choices\":[{",
-        "\"message\":{\"role\":\"assistant\",\"content\":\"Hello from local Ollama\",\"tool_calls\":[]},",
+        "\"message\":{\"role\":\"assistant\",\"content\":\"Hello from OpenRouter\",\"tool_calls\":[]},",
         "\"finish_reason\":\"stop\"",
         "}],",
         "\"usage\":{\"prompt_tokens\":5,\"completion_tokens\":4}",
@@ -83,23 +83,26 @@ async fn ollama_requests_do_not_send_an_authorization_header() {
     )
     .await;
 
-    let client =
-        OpenAiCompatClient::new("", OpenAiCompatConfig::ollama()).with_base_url(server.base_url());
+    let client = OpenAiCompatClient::new("sk-or-v1-test-key", OpenAiCompatConfig::openrouter())
+        .with_base_url(server.base_url());
     let response = client
         .send_message(&MessageRequest {
-            model: "qwen3:4b".to_string(),
+            model: "openai/gpt-4o-mini".to_string(),
             ..sample_request(false)
         })
         .await
-        .expect("local Ollama request should succeed without credentials");
+        .expect("OpenRouter request should succeed with bearer credentials");
 
-    assert_eq!(response.model, "qwen3:4b");
+    assert_eq!(response.model, "openai/gpt-4o-mini");
     let captured = state.lock().await;
     let request = captured.first().expect("server should capture request");
     assert_eq!(request.path, "/chat/completions");
-    assert!(!request.headers.contains_key("authorization"));
+    assert_eq!(
+        request.headers.get("authorization").map(String::as_str),
+        Some("Bearer sk-or-v1-test-key")
+    );
     let payload: serde_json::Value = serde_json::from_str(&request.body).expect("json body");
-    assert_eq!(payload["model"], json!("qwen3:4b"));
+    assert_eq!(payload["model"], json!("openai/gpt-4o-mini"));
 }
 
 #[tokio::test]

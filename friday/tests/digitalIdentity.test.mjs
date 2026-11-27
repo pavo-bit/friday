@@ -7,8 +7,10 @@ import fs from 'node:fs';
 const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'friday-phase13-test-'));
 process.env.FRIDAY_DB_PATH = path.join(tmpDir, 'friday-phase13.db');
 process.env.FRIDAY_PORT = '0';
-// Point Ollama to an unused local port so offline fallback & latency are deterministic
-process.env.OLLAMA_BASE_URL = 'http://127.0.0.1:19999/v1';
+// Keep OpenRouter unconfigured so offline fallback & latency are deterministic
+process.env.OPENROUTER_API_KEY = '';
+process.env.OPENROUTER_MODEL = '';
+process.env.OPENROUTER_BASE_URL = 'http://127.0.0.1:19999/v1';
 
 const { getMemoryStore } = await import('../dist/memory/store.js');
 const { getRequestUnderstandingEngine } = await import('../dist/orchestration/requestUnderstanding.js');

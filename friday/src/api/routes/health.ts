@@ -61,6 +61,12 @@ healthRoutes.get('/health', async (_req: Request, res: Response) => {
         dbPath: config.dbPath,
         dbExists: fs.existsSync(config.dbPath),
       },
+      ai: {
+        provider: 'openrouter',
+        configured: Boolean(config.openrouterApiKey && config.openrouterModel),
+        model: config.openrouterModel || null,
+        baseUrl: config.openrouterBaseUrl,
+      },
       control: {
         browserEnabled: config.enableBrowserControl,
         pcEnabled: config.enablePcControl,
