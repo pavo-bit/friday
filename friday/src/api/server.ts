@@ -18,6 +18,7 @@ import { healthRoutes } from './routes/health';
 import { assistantRoutes } from './routes/assistant';
 import { taskRoutes } from './routes/tasks';
 import { approvalRoutes } from './routes/approvals';
+import { presentationRoutes } from './routes/presentations';
 import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
@@ -133,6 +134,7 @@ export class FridayServer {
     this.app.use('/friday/memory', memoryRoutes);
     this.app.use('/friday/tasks', taskRoutes);
     this.app.use('/friday/approvals', approvalRoutes);
+    this.app.use('/friday', presentationRoutes);
     this.app.use('/friday', healthRoutes);
     this.app.use('/friday', assistantRoutes);
 
@@ -374,7 +376,9 @@ export class FridayServer {
       if (client.readyState !== WebSocket.OPEN) continue;
 
       if (
-        (message.type === WsMessageType.TASK_EVENT || message.type === WsMessageType.APPROVAL_NEEDED) &&
+        (message.type === WsMessageType.TASK_EVENT ||
+          message.type === WsMessageType.APPROVAL_NEEDED ||
+          message.type === WsMessageType.PRESENTATION_EVENT) &&
         targetOwnerId
       ) {
         if (meta.actorId !== targetOwnerId) {

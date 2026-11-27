@@ -423,6 +423,237 @@
     document.getElementById('backupStatus').textContent = `Saved to ${res.path}`;
   });
 
+  // JARVIS Execution & Presentation State (deduplication + out-of-order protection)
+  const seenEvents = new Set();
+  const taskProgressWatermark = new Map();
+  let activeTaskId = null;
+
+  function statusClass(status) {
+    return String(status || '').toLowerCase().replace(/[^a-z0-9_]/g, '');
+  }
+
+  function renderExecutionOverview(task, steps = []) {
+    if (!task) return;
+    activeTaskId = task.id;
+    document.getElementById('execTaskTitle').textContent = task.originalRequest || 'Background Task';
+    document.getElementById('execTaskId').textContent = task.id;
+    const pill = document.getElementById('execStatusPill');
+    pill.textContent = task.status;
+    pill.className = `pill ${statusClass(task.status)}`;
+
+    const pct = Math.max(0, Math.min(100, Number(task.progress || 0)));
+    document.getElementById('execProgressFill').style.width = `${pct}%`;
+    document.getElementById('execProgressTrack').setAttribute('aria-valuenow', String(pct));
+
+    const started = task.startedAt ? new Date(task.startedAt).toLocaleTimeString() : '--';
+    const dur =
+      task.startedAt && task.completedAt
+        ? `${Math.max(0, Date.parse(task.completedAt) - Date.parse(task.startedAt))}ms`
+        : task.status;
+    document.getElementById('execTiming').textContent = `${started} · ${dur}`;
+
+    const runningStep = steps.find((s) => s.status === 'RUNNING' || s.status === 'WAITING_FOR_APPROVAL');
+    document.getElementById('execCurrentStep').textContent = runningStep
+      ? `${runningStep.capabilityId} (${runningStep.status})`
+      : `${steps.filter((s) => s.status === 'COMPLETED').length}/${steps.length} steps`;
+
+    const traceList = document.getElementById('execTraceList');
+    traceList.textContent = '';
+    if (!steps.length) {
+      const empty = document.createElement('div');
+      empty.className = 'hint';
+      empty.textContent = 'No steps recorded yet.';
+      traceList.appendChild(empty);
+      return;
+    }
+
+    for (const step of steps) {
+      const row = document.createElement('div');
+      row.className = 'trace-item';
+
+      const left = document.createElement('div');
+      left.textContent = `${step.executionOrder + 1}. ${step.capabilityId}`;
+      if (Array.isArray(step.dependencies) && step.dependencies.length > 0) {
+        const dep = document.createElement('span');
+        dep.className = 'hint';
+        dep.textContent = ` (after ${step.dependencies.join(', ')})`;
+        left.appendChild(dep);
+      }
+
+      const right = document.createElement('span');
+      right.className = `pill ${statusClass(step.status)}`;
+      right.textContent = step.status;
+
+      row.appendChild(left);
+      row.appendChild(right);
+      traceList.appendChild(row);
+    }
+  }
+
+  function renderPresentationCards(presentations) {
+    const container = document.getElementById('presentationCards');
+    container.textContent = '';
+
+    if (!presentations || !presentations.length) {
+      const hint = document.createElement('div');
+      hint.className = 'hint';
+      hint.textContent = 'Verified result cards, metrics, tables, charts, and approvals will appear here.';
+      container.appendChild(hint);
+      return;
+    }
+
+    for (const p of presentations) {
+      const card = document.createElement('article');
+      card.className = 'pres-card';
+
+      const head = document.createElement('div');
+      head.className = 'pres-card-head';
+
+      const title = document.createElement('div');
+      title.className = 'pres-title';
+      title.textContent = `[${String(p.presentationType).toUpperCase()}] ${p.title}`;
+
+      const badge = document.createElement('span');
+      badge.className = `pill ${statusClass(p.verificationStatus)}`;
+      badge.textContent = p.verificationStatus;
+
+      head.appendChild(title);
+      head.appendChild(badge);
+      card.appendChild(head);
+
+      const summary = document.createElement('div');
+      summary.className = 'pres-summary';
+      summary.textContent = p.summary;
+      card.appendChild(summary);
+
+      const data = p.data || {};
+      if (p.presentationType === 'metric' && Array.isArray(data.metrics)) {
+        const grid = document.createElement('div');
+        grid.className = 'pres-metrics';
+        for (const m of data.metrics) {
+          const box = document.createElement('div');
+          box.className = 'pres-metric-box';
+          const lbl = document.createElement('div');
+          lbl.className = 'pres-metric-label';
+          lbl.textContent = String(m.label || 'Metric');
+          const val = document.createElement('div');
+          val.className = 'pres-metric-val';
+          val.textContent = `${m.value ?? '--'}${m.unit ? ` ${m.unit}` : ''}`;
+          box.appendChild(lbl);
+          box.appendChild(val);
+          grid.appendChild(box);
+        }
+        card.appendChild(grid);
+      } else if (p.presentationType === 'table' && Array.isArray(data.rows)) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pres-table-wrap';
+        const table = document.createElement('table');
+        table.className = 'pres-table';
+        const cols = Array.isArray(data.columns) ? data.columns : [];
+        if (cols.length) {
+          const thead = document.createElement('thead');
+          const tr = document.createElement('tr');
+          for (const c of cols) {
+            const th = document.createElement('th');
+            th.textContent = String(c);
+            tr.appendChild(th);
+          }
+          thead.appendChild(tr);
+          table.appendChild(thead);
+        }
+        const tbody = document.createElement('tbody');
+        for (const r of data.rows.slice(0, 10)) {
+          const tr = document.createElement('tr');
+          for (const c of cols) {
+            const td = document.createElement('td');
+            td.textContent = r && r[c] !== undefined ? String(r[c]) : '';
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        card.appendChild(wrap);
+      } else if (p.presentationType === 'chart' && Array.isArray(data.labels) && Array.isArray(data.values)) {
+        const chart = document.createElement('div');
+        chart.className = 'pres-chart';
+        const numericVals = data.values.map((v) => Number(v) || 0);
+        const maxVal = Math.max(1, ...numericVals);
+        for (let i = 0; i < data.labels.length; i++) {
+          const row = document.createElement('div');
+          row.className = 'pres-chart-row';
+          const lbl = document.createElement('span');
+          lbl.textContent = String(data.labels[i]);
+          const bg = document.createElement('div');
+          bg.className = 'pres-chart-bar-bg';
+          const bar = document.createElement('div');
+          bar.className = 'pres-chart-bar';
+          bar.style.width = `${Math.round((numericVals[i] / maxVal) * 100)}%`;
+          bg.appendChild(bar);
+          const val = document.createElement('span');
+          val.className = 'mono';
+          val.textContent = String(numericVals[i]);
+          row.appendChild(lbl);
+          row.appendChild(bg);
+          row.appendChild(val);
+          chart.appendChild(row);
+        }
+        card.appendChild(chart);
+      }
+
+      if (Array.isArray(p.provenance) && p.provenance.length > 0) {
+        const prov = document.createElement('div');
+        prov.className = 'pres-prov';
+        const firstProv = p.provenance[0];
+        prov.textContent = `Source: ${firstProv.sourceName} · ${firstProv.freshnessLabel}`;
+        card.appendChild(prov);
+      }
+
+      if (Array.isArray(p.actions) && p.actions.length > 0) {
+        const actRow = document.createElement('div');
+        actRow.className = 'btn-group';
+        for (const act of p.actions) {
+          if (!act.approvalId) continue;
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = act.kind === 'approve' ? 'btn-primary' : 'btn-sm';
+          btn.textContent = act.label;
+          btn.addEventListener('click', async () => {
+            const endpoint = act.kind === 'approve' ? 'approve' : 'reject';
+            await api(`/friday/approvals/${act.approvalId}/${endpoint}`, {
+              method: 'POST',
+              body: JSON.stringify({}),
+            });
+            loadTasksAndPresentations();
+          });
+          actRow.appendChild(btn);
+        }
+        card.appendChild(actRow);
+      }
+
+      container.appendChild(card);
+    }
+  }
+
+  async function loadTasksAndPresentations() {
+    try {
+      const [{ tasks }, { presentations }] = await Promise.all([
+        api('/friday/tasks?limit=10'),
+        api('/friday/presentations?limit=10'),
+      ]);
+      if (tasks && tasks.length > 0) {
+        const targetTask = tasks.find((t) => t.id === activeTaskId) || tasks[0];
+        const detail = await api(`/friday/tasks/${targetTask.id}`);
+        renderExecutionOverview(detail.task, detail.steps || []);
+      }
+      renderPresentationCards(presentations || []);
+    } catch {
+      // Ignore transient load errors
+    }
+  }
+
+  document.getElementById('refreshPresentationsBtn').addEventListener('click', loadTasksAndPresentations);
+
   // WebSocket live updates
   function connectWs() {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -430,6 +661,7 @@
     const pill = document.getElementById('wsPill');
     ws.onopen = () => {
       pill.innerHTML = '<span class="dot online"></span> Connected';
+      loadTasksAndPresentations();
     };
     ws.onclose = () => {
       pill.innerHTML = '<span class="dot"></span> Reconnecting…';
@@ -448,6 +680,20 @@
         } else if (msg.type === 'reminder:triggered') {
           loadReminders();
           loadNotifications();
+        } else if (msg.type === 'task:event' && msg.payload?.taskId) {
+          const evKey = `${msg.payload.taskId}:${msg.payload.eventType}:${msg.payload.timestamp}:${msg.payload.stepId || ''}`;
+          if (seenEvents.has(evKey)) return;
+          seenEvents.add(evKey);
+
+          const prevPct = taskProgressWatermark.get(msg.payload.taskId) ?? -1;
+          const nextPct = Number(msg.payload.progress ?? 0);
+          if (nextPct < prevPct && msg.payload.status === 'RUNNING') return;
+          taskProgressWatermark.set(msg.payload.taskId, nextPct);
+
+          activeTaskId = msg.payload.taskId;
+          loadTasksAndPresentations();
+        } else if (msg.type === 'presentation:event') {
+          loadTasksAndPresentations();
         }
       } catch {
         // Ignore malformed WS message
@@ -462,6 +708,7 @@
     loadNotifications();
     loadMemories();
     loadSettings();
+    loadTasksAndPresentations();
   }
 
   connectWs();

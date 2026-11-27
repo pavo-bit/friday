@@ -92,6 +92,39 @@
             <button type="submit" class="btn-primary">Send</button>
           </form>
         </div>
+
+        <!-- JARVIS Execution Overview, Trace & Presentation Cards -->
+        <div class="jarvis-grid">
+          <div class="card jarvis-panel" id="executionOverviewCard" aria-live="polite">
+            <div class="card-header">
+              <h2>JARVIS Execution Overview</h2>
+              <span class="pill" id="execStatusPill">IDLE</span>
+            </div>
+            <div class="exec-meta-grid">
+              <div><span class="exec-label">Task</span><div class="exec-val" id="execTaskTitle">No active task</div></div>
+              <div><span class="exec-label">Task ID</span><div class="exec-val mono" id="execTaskId">--</div></div>
+              <div><span class="exec-label">Current Step</span><div class="exec-val" id="execCurrentStep">--</div></div>
+              <div><span class="exec-label">Started / Duration</span><div class="exec-val mono" id="execTiming">--</div></div>
+            </div>
+            <div class="progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="execProgressTrack">
+              <div class="progress-fill" id="execProgressFill" style="width: 0%"></div>
+            </div>
+            <div class="exec-trace-header">Execution Trace</div>
+            <div class="exec-trace-list" id="execTraceList">
+              <div class="hint">Submit a task to view live step execution and verification trace.</div>
+            </div>
+          </div>
+
+          <div class="card jarvis-panel" id="presentationDeckCard">
+            <div class="card-header">
+              <h2>Verified Result Deck</h2>
+              <button type="button" class="btn-sm" id="refreshPresentationsBtn">Refresh</button>
+            </div>
+            <div class="presentation-cards" id="presentationCards">
+              <div class="hint">Verified result cards, metrics, tables, charts, and approvals will appear here.</div>
+            </div>
+          </div>
+        </div>
       </section>
 
       <!-- TAB: MONITORING -->

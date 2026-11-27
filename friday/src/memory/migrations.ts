@@ -277,6 +277,30 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_approvals_actor ON capability_approvals(actor_id);
     `,
   },
+  {
+    version: 5,
+    name: 'presentations_and_verification_state',
+    sql: `
+      CREATE TABLE IF NOT EXISTS presentations (
+        presentation_id TEXT PRIMARY KEY,
+        task_id TEXT REFERENCES background_tasks(id) ON DELETE CASCADE,
+        conversation_id TEXT,
+        owner_id TEXT NOT NULL DEFAULT 'local',
+        presentation_type TEXT NOT NULL,
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        data_json TEXT NOT NULL DEFAULT '{}',
+        verification_status TEXT NOT NULL,
+        provenance_json TEXT NOT NULL DEFAULT '[]',
+        actions_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_presentations_task ON presentations(task_id);
+      CREATE INDEX IF NOT EXISTS idx_presentations_owner ON presentations(owner_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_presentations_conv ON presentations(conversation_id);
+    `,
+  },
 ];
 
 /**

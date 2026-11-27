@@ -13,6 +13,8 @@ import { createLayerLogger } from '../shared/logger';
 import { ExecutionPlan, ExecutionPlanStep } from './toolPlanner';
 import { CapabilityRegistry, CapabilityResult, getCapabilityRegistry } from './toolRegistry';
 import { getSafetyGate } from './safetyGate';
+import { getResultVerifier } from './resultVerifier';
+import { getDisplayManager } from '../presentation/displayManager';
 
 const log = createLayerLogger('BackgroundOrchestrator');
 
@@ -22,6 +24,7 @@ export type BackgroundTaskStatus =
   | 'RUNNING'
   | 'WAITING_FOR_APPROVAL'
   | 'VERIFYING'
+  | 'PRESENTING'
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED'
@@ -68,7 +71,8 @@ export const ALLOWED_TASK_TRANSITIONS: Record<BackgroundTaskStatus, Set<Backgrou
   QUEUED: new Set(['RUNNING', 'WAITING_FOR_APPROVAL', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
   WAITING_FOR_APPROVAL: new Set(['QUEUED', 'RUNNING', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
   RUNNING: new Set(['VERIFYING', 'WAITING_FOR_APPROVAL', 'COMPLETED', 'FAILED', 'CANCELLED', 'TIMED_OUT', 'INTERRUPTED']),
-  VERIFYING: new Set(['COMPLETED', 'FAILED', 'CANCELLED']),
+  VERIFYING: new Set(['PRESENTING', 'COMPLETED', 'FAILED', 'CANCELLED']),
+  PRESENTING: new Set(['COMPLETED', 'FAILED', 'CANCELLED']),
   INTERRUPTED: new Set(['QUEUED', 'FAILED', 'CANCELLED']),
   COMPLETED: new Set(),
   FAILED: new Set(),
@@ -128,6 +132,7 @@ export interface TaskEventRecord {
 
 export interface SubmitPlanOptions {
   ownerId?: string;
+  conversationId?: string;
   taskClass?: TaskClass;
   priority?: number;
   idempotencyKey?: string;
@@ -252,7 +257,7 @@ export class BackgroundOrchestrator {
       ).run(
         taskId,
         ownerId,
-        plan.conversationId || null,
+        plan.conversationId || options.conversationId || null,
         options.idempotencyKey || null,
         taskClass,
         priority,
@@ -710,7 +715,15 @@ export class BackgroundOrchestrator {
 
         const waitingStep = stepResults.find((r) => r.waitingApproval);
         if (waitingStep) {
-          // Task is paused in WAITING_FOR_APPROVAL; preserve completed and pending steps
+          // Task is paused in WAITING_FOR_APPROVAL; emit approval presentation safely
+          try {
+            const latestTask = (await this.getTask(task.id)) || task;
+            const steps = await this.getTaskSteps(task.id);
+            const verification = getResultVerifier().verifyTaskExecution(latestTask, steps, this.registry);
+            await getDisplayManager().presentTaskResult(latestTask, steps, verification);
+          } catch (err) {
+            log.warn('Failed to create approval presentation', { error: (err as Error).message });
+          }
           return;
         }
 
@@ -732,6 +745,14 @@ export class BackgroundOrchestrator {
               timestamp: new Date().toISOString(),
               summary: failedStep.errorMessage || 'Task failed.',
             });
+            try {
+              const failedTask = (await this.getTask(task.id)) || cur;
+              const steps = await this.getTaskSteps(task.id);
+              const verification = getResultVerifier().verifyTaskExecution(failedTask, steps, this.registry);
+              await getDisplayManager().presentTaskResult(failedTask, steps, verification);
+            } catch (err) {
+              log.warn('Failed to create error presentation', { error: (err as Error).message });
+            }
           }
           return;
         }
@@ -764,10 +785,70 @@ export class BackgroundOrchestrator {
         return;
       }
 
-      await this.transitionTask(task.id, 'VERIFYING', { progress: 98 });
+      await this.transitionTask(task.id, 'VERIFYING', { progress: 96 });
+      await this.recordAndEmitEvent(task.id, undefined, 'task.verification.started', {
+        taskId: task.id,
+        conversationId: task.conversationId || undefined,
+        status: 'VERIFYING',
+        progress: 96,
+        timestamp: new Date().toISOString(),
+        summary: 'Verifying execution results, schemas, and provenance.',
+      });
+
+      const latestTask = (await this.getTask(task.id)) || task;
+      const finalSteps = await this.getTaskSteps(task.id);
+      const verification = getResultVerifier().verifyTaskExecution(latestTask, finalSteps, this.registry);
+
+      if (verification.status === 'FAILED' || verification.status === 'UNAVAILABLE' || verification.status === 'UNVERIFIED') {
+        await this.recordAndEmitEvent(task.id, undefined, 'task.verification.failed', {
+          taskId: task.id,
+          conversationId: task.conversationId || undefined,
+          status: 'FAILED',
+          progress: 96,
+          timestamp: new Date().toISOString(),
+          summary: verification.summary,
+        });
+        await this.transitionTask(task.id, 'FAILED', {
+          errorCode: 'VERIFICATION_FAILED',
+          errorMessage: verification.errors[0] || verification.summary,
+        });
+        try {
+          const failedTask = (await this.getTask(task.id)) || latestTask;
+          await getDisplayManager().presentTaskResult(failedTask, finalSteps, verification);
+        } catch (err) {
+          log.warn('Failed to create verification-error presentation', { error: (err as Error).message });
+        }
+        return;
+      }
+
+      await this.recordAndEmitEvent(task.id, undefined, 'task.verification.completed', {
+        taskId: task.id,
+        conversationId: task.conversationId || undefined,
+        status: 'VERIFYING',
+        progress: 98,
+        timestamp: new Date().toISOString(),
+        summary: verification.summary,
+      });
+
+      await this.recordAndEmitEvent(task.id, undefined, 'task.progress', {
+        taskId: task.id,
+        conversationId: task.conversationId || undefined,
+        status: 'PRESENTING',
+        progress: 99,
+        timestamp: new Date().toISOString(),
+        summary: 'Generating verified presentation contract.',
+      });
+      let presentationSummary = outputs.join('\n') || verification.summary || 'Completed.';
+      try {
+        const presentation = await getDisplayManager().presentTaskResult(latestTask, finalSteps, verification);
+        presentationSummary = presentation.summary || presentationSummary;
+      } catch (err) {
+        log.warn('DisplayManager presentation failed', { error: (err as Error).message });
+      }
+
       await this.transitionTask(task.id, 'COMPLETED', {
         progress: 100,
-        resultSummary: outputs.join('\n') || 'Completed.',
+        resultSummary: presentationSummary,
       });
 
       await this.recordAndEmitEvent(task.id, undefined, 'task.completed', {

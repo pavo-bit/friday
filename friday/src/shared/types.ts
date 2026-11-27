@@ -164,6 +164,7 @@ export enum WsMessageType {
   NOTIFICATION_NEW = 'notification:new',
   REMINDER_TRIGGERED = 'reminder:triggered',
   TASK_EVENT = 'task:event',
+  PRESENTATION_EVENT = 'presentation:event',
   ERROR = 'error',
 }
 

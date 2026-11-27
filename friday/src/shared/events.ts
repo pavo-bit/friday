@@ -54,6 +54,15 @@ export interface FridayEvents {
   'task.failed': (payload: TaskLifecycleEventPayload) => void;
   'task.timed_out': (payload: TaskLifecycleEventPayload) => void;
   'task.interrupted': (payload: TaskLifecycleEventPayload) => void;
+  'task.verification.started': (payload: TaskLifecycleEventPayload) => void;
+  'task.verification.completed': (payload: TaskLifecycleEventPayload) => void;
+  'task.verification.failed': (payload: TaskLifecycleEventPayload) => void;
+
+  // Presentation events
+  'presentation.created': (payload: Record<string, unknown>) => void;
+  'presentation.updated': (payload: Record<string, unknown>) => void;
+  'presentation.ready': (payload: Record<string, unknown>) => void;
+  'presentation.failed': (payload: Record<string, unknown>) => void;
 
   // Safety events
   'safety:approval_needed': (request: ApprovalRequest) => void;
