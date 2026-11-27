@@ -330,6 +330,42 @@ export class CapabilityDiscoveryEngine {
     }
 
     // Trading Copilot deterministic discovery
+    if (/\b(market\s+session|trading\s+hours|is\s+(?:market|nse|bse)\s+open|market\s+open|(?:nse|bse)\s+open|market\s+holiday)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.market_session');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Market session inquiry matched trading.market_session',
+          confidence: 0.95,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(scan\s+(?:intraday\s+)?setups|scan\s+(?:setups|stocks|market)|strongest\s+(?:verified\s+)?setups|today'?s\s+setups|intraday\s+scans?)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.scan_setups');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Scan setups inquiry matched trading.scan_setups',
+          confidence: 0.95,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(capital\s+status|confirmed\s+capital|current\s+daily\s+risk)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.capital_status') || this.registry.get('trading.risk_budget');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Capital status inquiry matched trading.capital_status',
+          confidence: 0.94,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
     if (/\b(remaining\s+risk\s+budget|risk\s+budget|trading\s+capital)\b/i.test(lower)) {
       const cap = this.registry.get('trading.risk_budget');
       if (cap && cap.enabled) {
@@ -381,17 +417,18 @@ export class CapabilityDiscoveryEngine {
         };
       }
     }
-    if (/\b(analyze\s+(?:this\s+)?stock|intraday\s+setups?|find\s+intraday\s+setups?)\b/i.test(lower)) {
+    if (/\b(analyze\s+(?:this\s+)?stock|find\s+intraday\s+setups?|analyze\s+(?:nifty|banknifty|[A-Z]{2,12}))\b/i.test(lower)) {
       const cap = this.registry.get('trading.analyze_stock');
       if (cap && cap.enabled) {
-        const symMatch = clause.match(/\b([A-Z]{2,12})\b/);
+        const symMatch = clause.match(/\b(nifty|banknifty|[A-Z]{2,12})\b/i);
+        const symbol = symMatch ? symMatch[1].toUpperCase() : undefined;
         return {
           capability: cap,
           matchReason: 'Stock analysis inquiry matched trading.analyze_stock',
-          confidence: 0.9,
-          suggestedArguments: symMatch ? { symbol: symMatch[1] } : {},
-          missingInputs: symMatch ? [] : ['symbol'],
-          clarificationQuestion: symMatch ? undefined : 'Which NSE/BSE stock symbol would you like me to analyze?',
+          confidence: 0.92,
+          suggestedArguments: symbol ? { symbol } : {},
+          missingInputs: symbol ? [] : ['symbol'],
+          clarificationQuestion: symbol ? undefined : 'Which NSE/BSE stock symbol would you like me to analyze?',
         };
       }
     }

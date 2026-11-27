@@ -192,6 +192,23 @@
 
       <!-- TAB: TRADING COPILOT -->
       <section class="tab-panel" id="tab-trading">
+        <!-- Market Session Status Banner -->
+        <div class="card" id="trdSessionBannerCard" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; margin-bottom: 16px; border-left: 4px solid var(--accent);">
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <span class="badge" id="trdSessionStateBadge" style="font-weight: 600; padding: 4px 10px; font-size: 12px;">NSE/BSE: CHECKING</span>
+            <span id="trdSessionDescription" style="font-size: 13px; color: var(--muted);">Loading market hours status...</span>
+          </div>
+          <div id="trdNextSessionOpen" style="font-size: 12px; color: var(--muted);"></div>
+        </div>
+
+        <!-- Capital Confirmation Prompt Warning Banner -->
+        <div class="card" id="trdCapitalWarningCard" style="display: none; border-left: 4px solid var(--warn); margin-bottom: 16px; padding: 12px 18px;">
+          <div>
+            <strong style="color: #fbbf24;">Session Capital Required:</strong>
+            <span id="trdCapitalWarningText" style="margin-left: 8px; font-size: 13px; color: var(--muted);">Capital has not been confirmed for today. Please confirm below before sizing positions.</span>
+          </div>
+        </div>
+
         <div class="stats-grid">
           <div class="card stat-card jarvis-panel">
             <div class="stat-label">Session Capital</div>
@@ -223,6 +240,41 @@
             <input type="number" step="0.01" min="1" id="trdAllocCap" placeholder="Allocated Trading Capital (INR)" required>
             <button type="submit" class="btn-primary">Confirm Capital</button>
           </form>
+        </div>
+
+        <!-- Strategy Setups Scanner Section -->
+        <div class="card" style="margin-bottom: 16px;">
+          <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+            <h2>Active Intraday Setups (NSE/BSE Multi-Symbol Scan)</h2>
+            <button class="btn-sm" id="trdScanBtn">Scan Setups</button>
+          </div>
+          <div id="trdSetupsList" class="list-container">
+            <div class="hint">Click "Scan Setups" or ask FRIDAY "scan setups" / "analyze NIFTY" to find rule-based intraday opportunities.</div>
+          </div>
+        </div>
+
+        <!-- Journal Analytics Grid -->
+        <div class="stats-grid" id="trdJournalStatsGrid">
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Win Rate</div>
+            <div class="stat-value" id="trdWinRateVal">--</div>
+            <div class="stat-sub" id="trdWinRateSub">0 trades recorded</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Profit Factor</div>
+            <div class="stat-value" id="trdProfitFactorVal">--</div>
+            <div class="stat-sub">Gross win / Gross loss</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Risk Adherence</div>
+            <div class="stat-value" id="trdRiskAdherenceVal">--</div>
+            <div class="stat-sub">SL strictly respected</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Total Realized P&amp;L</div>
+            <div class="stat-value" id="trdAllTimePnlVal">--</div>
+            <div class="stat-sub" id="trdMistakeSub">Journal discipline</div>
+          </div>
         </div>
 
         <div class="two-col">

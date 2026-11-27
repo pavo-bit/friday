@@ -121,7 +121,7 @@ export class TradingJournalService {
     input: {
       exchange?: ExchangeCode;
       symbol: string;
-      side: 'LONG' | 'SHORT';
+      side: 'LONG' | 'SHORT' | 'BUY' | 'SELL';
       quantity: number;
       entryPrice: number | string;
       exitPrice?: number | string | null;
@@ -132,6 +132,9 @@ export class TradingJournalService {
       exitAt?: string | null;
       charges?: number | string;
       slippage?: number | string;
+      realizedPnl?: number | string;
+      adheredToRules?: boolean;
+      mistakeTag?: string;
       notes?: string;
     }
   ): Promise<JournalEntryRecord> {
@@ -142,7 +145,7 @@ export class TradingJournalService {
     const id = uuidv4();
     const exchange: ExchangeCode = input.exchange === 'BSE' ? 'BSE' : 'NSE';
     const symbol = input.symbol.trim().toUpperCase();
-    const side = input.side === 'SHORT' ? 'SHORT' : 'LONG';
+    const side = input.side === 'SHORT' || input.side === 'SELL' ? 'SHORT' : 'LONG';
     const quantity = Math.trunc(input.quantity);
     if (quantity <= 0) throw new Error('Quantity must be positive');
 
@@ -160,14 +163,22 @@ export class TradingJournalService {
     let status: 'OPEN' | 'CLOSED' = 'OPEN';
     if (exitMinor !== null) {
       status = 'CLOSED';
-      const gross =
-        side === 'LONG' ? (exitMinor - entryMinor) * quantity : (entryMinor - exitMinor) * quantity;
-      realizedPnlMinor = gross - chargesMinor - slippageMinor;
+      if (input.realizedPnl !== undefined) {
+        realizedPnlMinor = toMinorUnits(input.realizedPnl);
+      } else {
+        const gross =
+          side === 'LONG' ? (exitMinor - entryMinor) * quantity : (entryMinor - exitMinor) * quantity;
+        realizedPnlMinor = gross - chargesMinor - slippageMinor;
+      }
     }
 
     const entryAt = input.entryAt || new Date().toISOString();
     const exitAt = status === 'CLOSED' ? input.exitAt || new Date().toISOString() : null;
-    const notes = redactSecrets((input.notes || '').trim());
+    let rawNotes = (input.notes || '').trim();
+    if (input.mistakeTag) {
+      rawNotes = `[MISTAKE:${input.mistakeTag}] ${rawNotes}`;
+    }
+    const notes = redactSecrets(rawNotes);
 
     db.prepare(
       `INSERT INTO trading_journal_entries (
@@ -255,6 +266,113 @@ export class TradingJournalService {
       dedupeKey,
       dedupeWindowMs: params.dedupeWindowMs ?? 5 * 60_000,
     });
+  }
+
+  async getJournalAnalytics(ownerId: string): Promise<{
+    totalTrades: number;
+    openTrades: number;
+    closedTrades: number;
+    wins: number;
+    winningTrades: number;
+    losses: number;
+    losingTrades: number;
+    winRatePct: number;
+    totalRealizedPnlMinor: number;
+    totalRealizedPnlFormatted: string;
+    netRealizedPnlFormatted: string;
+    totalChargesMinor: number;
+    totalChargesFormatted: string;
+    profitFactor: number;
+    avgWinMinor: number;
+    avgLossMinor: number;
+    riskAdherencePct: number;
+    strategyBreakdown: Record<string, { count: number; wins: number; netPnlMinor: number }>;
+    mistakes: string[];
+    mistakeBreakdown: Array<{ mistake: string; count: number }>;
+  }> {
+    const entries = await this.listJournal(ownerId, 1000);
+    const closed = entries.filter((e) => e.status === 'CLOSED');
+    const open = entries.filter((e) => e.status === 'OPEN');
+
+    const wins = closed.filter((e) => e.realizedPnlMinor > 0);
+    const losses = closed.filter((e) => e.realizedPnlMinor < 0);
+
+    const grossWin = wins.reduce((acc, e) => acc + e.realizedPnlMinor, 0);
+    const grossLoss = Math.abs(losses.reduce((acc, e) => acc + e.realizedPnlMinor, 0));
+    const totalPnl = closed.reduce((acc, e) => acc + e.realizedPnlMinor, 0);
+    const totalCharges = closed.reduce((acc, e) => acc + e.chargesMinor + e.slippageMinor, 0);
+
+    // Risk adherence: did the trader exit within the planned stop loss risk?
+    let adheredCount = 0;
+    const mistakes: string[] = [];
+    const mistakeCounts = new Map<string, number>();
+
+    for (const e of closed) {
+      const match = e.notes.match(/\[MISTAKE:([A-Z_]+)\]/);
+      if (match) {
+        const tag = match[1];
+        mistakeCounts.set(tag, (mistakeCounts.get(tag) || 0) + 1);
+      }
+
+      const plannedRiskPerShare = Math.abs(e.entryPriceMinor - e.stopLossMinor);
+      const plannedTotalRisk = plannedRiskPerShare * e.quantity;
+      const actualLoss = e.realizedPnlMinor < 0 ? Math.abs(e.realizedPnlMinor) : 0;
+
+      if (actualLoss <= plannedTotalRisk * 1.05 && (!match || match[1] === 'NONE')) {
+        adheredCount++;
+      } else {
+        const desc = match
+          ? match[1]
+          : `${e.symbol} (${e.entryAt.slice(0, 10)}): Loss exceeded stop loss boundary by ${formatMinorUnits(actualLoss - plannedTotalRisk)} INR.`;
+        mistakes.push(desc);
+        if (!match) {
+          mistakeCounts.set('EXCEEDED_STOP_LOSS', (mistakeCounts.get('EXCEEDED_STOP_LOSS') || 0) + 1);
+        }
+      }
+    }
+
+    const riskAdherencePct = closed.length > 0 ? Math.round((adheredCount / closed.length) * 10_000) / 100 : 100;
+    const winRatePct = closed.length > 0 ? Math.round((wins.length / closed.length) * 10_000) / 100 : 0;
+    const profitFactor = grossLoss > 0 ? Math.round((grossWin / grossLoss) * 100) / 100 : grossWin > 0 ? 999 : 0;
+
+    const strategyBreakdown: Record<string, { count: number; wins: number; netPnlMinor: number }> = {};
+    for (const e of closed) {
+      const strat = e.strategyId || 'manual';
+      if (!strategyBreakdown[strat]) {
+        strategyBreakdown[strat] = { count: 0, wins: 0, netPnlMinor: 0 };
+      }
+      strategyBreakdown[strat].count++;
+      if (e.realizedPnlMinor > 0) strategyBreakdown[strat].wins++;
+      strategyBreakdown[strat].netPnlMinor += e.realizedPnlMinor;
+    }
+
+    const mistakeBreakdown = Array.from(mistakeCounts.entries()).map(([mistake, count]) => ({
+      mistake,
+      count,
+    }));
+
+    return {
+      totalTrades: entries.length,
+      openTrades: open.length,
+      closedTrades: closed.length,
+      wins: wins.length,
+      winningTrades: wins.length,
+      losses: losses.length,
+      losingTrades: losses.length,
+      winRatePct,
+      totalRealizedPnlMinor: totalPnl,
+      totalRealizedPnlFormatted: formatMinorUnits(totalPnl),
+      netRealizedPnlFormatted: formatMinorUnits(totalPnl),
+      totalChargesMinor: totalCharges,
+      totalChargesFormatted: formatMinorUnits(totalCharges),
+      profitFactor,
+      avgWinMinor: wins.length > 0 ? Math.round(grossWin / wins.length) : 0,
+      avgLossMinor: losses.length > 0 ? Math.round(grossLoss / losses.length) : 0,
+      riskAdherencePct,
+      strategyBreakdown,
+      mistakes,
+      mistakeBreakdown,
+    };
   }
 }
 

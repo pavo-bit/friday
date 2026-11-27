@@ -1,7 +1,7 @@
 // ============================================================
 // FRIDAY — Deterministic Technical Indicators
 // VWAP, RSI(14), MACD(12,26,9), EMA(9,20,50), ATR(14),
-// Average Volume(20), Support & Resistance
+// Average Volume(20), Support/Resistance, Opening Range & Trend
 // ============================================================
 
 import { IndicatorSnapshot, OhlcvCandle } from './tradingTypes';
@@ -79,11 +79,27 @@ export function computeMACD(
   };
 }
 
+/**
+ * Anchored Intraday VWAP.
+ * Accumulates typical price * volume from the beginning of the latest trading session.
+ */
 export function computeVWAP(candles: OhlcvCandle[]): number | null {
   if (candles.length === 0) return null;
+
+  // Find index of first candle of the current session date
+  const lastDate = candles[candles.length - 1].timestamp.slice(0, 10);
+  let sessionStartIndex = 0;
+  for (let i = candles.length - 1; i >= 0; i--) {
+    if (candles[i].timestamp.slice(0, 10) !== lastDate) {
+      sessionStartIndex = i + 1;
+      break;
+    }
+  }
+
+  const sessionCandles = candles.slice(sessionStartIndex);
   let pvSum = 0;
   let volSum = 0;
-  for (const c of candles) {
+  for (const c of sessionCandles) {
     const typical = (c.highMinor + c.lowMinor + c.closeMinor) / 3;
     pvSum += typical * c.volume;
     volSum += c.volume;
@@ -135,6 +151,58 @@ export function computeSupportResistance(
   return { supportMinor, resistanceMinor };
 }
 
+/**
+ * Opening Range: High and Low of the first N bars of the current trading session (e.g. first 3 5m bars = 15m ORB).
+ */
+export function computeOpeningRange(
+  candles: OhlcvCandle[],
+  timeframeOrBars: any = 3,
+  minutes?: number
+): { highMinor: number; lowMinor: number; rangeDurationMinutes: number } | null {
+  const barsCount =
+    typeof timeframeOrBars === 'number'
+      ? timeframeOrBars
+      : typeof minutes === 'number'
+      ? Math.max(1, Math.round(minutes / 5))
+      : 3;
+  if (!candles || candles.length < barsCount) return null;
+  const lastDate = candles[candles.length - 1].timestamp.slice(0, 10);
+  const sessionCandles = candles.filter((c) => c.timestamp.slice(0, 10) === lastDate);
+  if (sessionCandles.length < barsCount) return null;
+
+  const openingSlice = sessionCandles.slice(0, barsCount);
+  let highMinor = openingSlice[0].highMinor;
+  let lowMinor = openingSlice[0].lowMinor;
+  for (const c of openingSlice) {
+    if (c.highMinor > highMinor) highMinor = c.highMinor;
+    if (c.lowMinor < lowMinor) lowMinor = c.lowMinor;
+  }
+
+  return {
+    highMinor,
+    lowMinor,
+    rangeDurationMinutes: typeof minutes === 'number' ? minutes : barsCount * 5,
+  };
+}
+
+export function computeTrendStrength(
+  ema9: number | null,
+  ema20: number | null,
+  ema50: number | null,
+  rsi: number | null
+): IndicatorSnapshot['trendStrength'] {
+  if (ema9 === null || ema20 === null || ema50 === null) return 'NEUTRAL';
+  const rsiVal = rsi ?? 50;
+
+  if (ema9 > ema20 && ema20 > ema50) {
+    return rsiVal >= 55 ? 'STRONG_BULLISH' : 'BULLISH';
+  }
+  if (ema9 < ema20 && ema20 < ema50) {
+    return rsiVal <= 45 ? 'STRONG_BEARISH' : 'BEARISH';
+  }
+  return 'NEUTRAL';
+}
+
 export function analyzeIndicators(candles: OhlcvCandle[]): IndicatorSnapshot {
   const closes = candles.map((c) => c.closeMinor);
   const ema9Arr = computeEMA(closes, 9);
@@ -145,18 +213,31 @@ export function analyzeIndicators(candles: OhlcvCandle[]): IndicatorSnapshot {
   const ema9 = ema9Arr[ema9Arr.length - 1] ?? null;
   const ema20 = ema20Arr[ema20Arr.length - 1] ?? null;
   const ema50 = ema50Arr[ema50Arr.length - 1] ?? null;
+  const rsi14 = computeRSI(closes, 14);
+  const avgVol = computeAverageVolume(candles, 20);
+  const curVol = candles.length > 0 ? candles[candles.length - 1].volume : 0;
+  const volumeBreakoutRatio = avgVol && avgVol > 0 ? Math.round((curVol / avgVol) * 100) / 100 : null;
+
+  const orb = computeOpeningRange(candles, 3);
 
   return {
     vwapMinor: computeVWAP(candles),
-    rsi14: computeRSI(closes, 14),
+    rsi14,
     macd: computeMACD(closes, 12, 26, 9),
     ema9Minor: ema9 !== null ? Math.round(ema9) : null,
     ema20Minor: ema20 !== null ? Math.round(ema20) : null,
+    ema21Minor: ema20 !== null ? Math.round(ema20) : null,
+    sma20Minor: ema20 !== null ? Math.round(ema20) : null,
     ema50Minor: ema50 !== null ? Math.round(ema50) : null,
     atr14Minor: computeATR(candles, 14),
-    avgVolume20: computeAverageVolume(candles, 20),
+    avgVolume20: avgVol,
     supportMinor,
     resistanceMinor,
+    openingRangeMinor: orb,
+    openingRangeHighMinor: orb?.highMinor,
+    openingRangeLowMinor: orb?.lowMinor,
+    volumeBreakoutRatio,
+    trendStrength: computeTrendStrength(ema9, ema20, ema50, rsi14),
     warmupComplete: candles.length >= 50,
     candleCount: candles.length,
   };

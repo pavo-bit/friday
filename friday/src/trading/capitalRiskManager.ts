@@ -22,15 +22,32 @@ function todayIstDate(): string {
   return new Date(istMs).toISOString().slice(0, 10);
 }
 
-/**
- * Deterministic NSE/BSE cash-equity intraday cost estimate (brokerage + STT + exchange + SEBI + GST + stamp).
- */
-export function estimateIntradayChargesMinor(
+export interface IntradayChargesBreakdown {
+  brokerageMinor: number;
+  sttMinor: number;
+  exchangeTurnoverMinor: number;
+  gstMinor: number;
+  sebiChargesMinor: number;
+  stampDutyMinor: number;
+  totalChargesMinor: number;
+}
+
+export function estimateIntradayChargesBreakdown(
   entryPriceMinor: number,
   exitPriceMinor: number,
   quantity: number
-): number {
-  if (quantity <= 0) return 0;
+): IntradayChargesBreakdown {
+  if (quantity <= 0) {
+    return {
+      brokerageMinor: 0,
+      sttMinor: 0,
+      exchangeTurnoverMinor: 0,
+      gstMinor: 0,
+      sebiChargesMinor: 0,
+      stampDutyMinor: 0,
+      totalChargesMinor: 0,
+    };
+  }
   const buyTurnover = entryPriceMinor * quantity;
   const sellTurnover = exitPriceMinor * quantity;
   const totalTurnover = buyTurnover + sellTurnover;
@@ -46,10 +63,35 @@ export function estimateIntradayChargesMinor(
   const exchange = Math.round(totalTurnover * 0.0000335);
   // Stamp duty: 0.003% on buy side
   const stamp = Math.round(buyTurnover * 0.00003);
+  // SEBI turnover charge: ~0.0001%
+  const sebi = Math.round(totalTurnover * 0.000001);
   // GST: 18% on (brokerage + exchange)
   const gst = Math.round((brokerage + exchange) * 0.18);
 
-  return brokerage + stt + exchange + stamp + gst;
+  const total = brokerage + stt + exchange + stamp + sebi + gst;
+  return {
+    brokerageMinor: brokerage,
+    sttMinor: stt,
+    exchangeTurnoverMinor: exchange,
+    gstMinor: gst,
+    sebiChargesMinor: sebi,
+    stampDutyMinor: stamp,
+    totalChargesMinor: total,
+  };
+}
+
+/**
+ * Deterministic NSE/BSE cash-equity intraday cost estimate (brokerage + STT + exchange + SEBI + GST + stamp).
+ */
+export function estimateIntradayChargesMinor(
+  ...args: any[]
+): any {
+  if (args.length === 5) {
+    const [, , entryPriceMinor, exitPriceMinor, quantity] = args;
+    return estimateIntradayChargesBreakdown(Number(entryPriceMinor), Number(exitPriceMinor), Number(quantity));
+  }
+  const [entryPriceMinor, exitPriceMinor, quantity] = args;
+  return estimateIntradayChargesBreakdown(Number(entryPriceMinor), Number(exitPriceMinor), Number(quantity)).totalChargesMinor;
 }
 
 export class CapitalRiskManager {
@@ -210,6 +252,67 @@ export class CapitalRiskManager {
       confirmedByUser: Number(row.confirmed_by_user) === 1,
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at),
+    };
+  }
+
+  /**
+   * Proactively checks whether trading capital is confirmed for today.
+   * If unconfirmed, fetches the most recent historical snapshot so the user
+   * can be prompted cleanly to re-confirm or update.
+   */
+  async checkCapitalStatus(
+    ownerId: string,
+    sessionDate = todayIstDate()
+  ): Promise<{
+    confirmed: boolean;
+    needsConfirmation: boolean;
+    session: TradingCapitalSession | null;
+    currentSession?: TradingCapitalSession | null;
+    previousSnapshot: Record<string, unknown> | null;
+    suggestedCapital?: Record<string, unknown> | null;
+    promptRequired: boolean;
+    message: string;
+  }> {
+    const session = await this.getSessionCapital(ownerId, sessionDate);
+    if (session && session.confirmedByUser) {
+      return {
+        confirmed: true,
+        needsConfirmation: false,
+        session,
+        currentSession: session,
+        previousSnapshot: null,
+        suggestedCapital: null,
+        promptRequired: false,
+        message: `Trading capital is confirmed for ${sessionDate}: ${formatMinorUnits(session.allocatedCapitalMinor)} ${session.currency} (available: ${formatMinorUnits(session.availableForNewPositionsMinor)} ${session.currency}).`,
+      };
+    }
+
+    const snapshots = await this.getCapitalSnapshots(ownerId);
+    const lastSnapshot = snapshots.length > 0 ? snapshots[snapshots.length - 1] : null;
+
+    if (lastSnapshot) {
+      const prevAlloc = Number(lastSnapshot.allocated_capital_minor);
+      return {
+        confirmed: false,
+        needsConfirmation: true,
+        session: null,
+        currentSession: null,
+        previousSnapshot: lastSnapshot,
+        suggestedCapital: lastSnapshot,
+        promptRequired: true,
+        message: `Trading capital has not been confirmed for today (${sessionDate}). Your previous confirmed capital was ${formatMinorUnits(prevAlloc)} INR. Would you like to confirm this amount or set a new capital?`,
+      };
+    }
+
+    return {
+      confirmed: false,
+      needsConfirmation: true,
+      session: null,
+      currentSession: null,
+      previousSnapshot: null,
+      suggestedCapital: null,
+      promptRequired: true,
+      message: `Capital has not been confirmed for today (${sessionDate}). Please confirm capital before sizing positions.`,
     };
   }
 
@@ -497,13 +600,17 @@ export class CapitalRiskManager {
     const estimatedSlippageMinor = slippagePerShare * quantity;
     const estimatedChargesMinor = estimateIntradayChargesMinor(entry, sl, quantity);
     const maxLossWithCostsMinor = riskAmountMinor + estimatedSlippageMinor + estimatedChargesMinor;
+    const netProjectedPnlMinor = Math.round(rewardPerShare * quantity - estimatedChargesMinor - estimatedSlippageMinor);
 
     return {
       approved: true,
       reasons: [],
       quantity,
+      recommendedQuantity: quantity,
       positionValueMinor,
       riskAmountMinor,
+      maxAllowedRiskMinor: maxTradeRiskMinor,
+      netProjectedPnlMinor,
       estimatedChargesMinor,
       estimatedSlippageMinor,
       rewardRiskRatio: rr,

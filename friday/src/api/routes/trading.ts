@@ -10,8 +10,9 @@ import { toMinorUnits } from '../../finance/money';
 import { runBacktest } from '../../trading/backtester';
 import { getCapitalRiskManager } from '../../trading/capitalRiskManager';
 import { getTradingJournalService } from '../../trading/journalAlerts';
-import { getMarketDataProvider, normalizeAndValidateCandles } from '../../trading/marketData';
-import { evaluateStrategies } from '../../trading/strategyEngine';
+import { getMarketDataProvider, normalizeAndValidateCandles, STANDARD_INSTRUMENTS, getMarketDataRegistry } from '../../trading/marketData';
+import { evaluateStrategies, scanMultipleInstruments } from '../../trading/strategyEngine';
+import { getMarketSessionEngine } from '../../trading/sessionEngine';
 import { ExchangeCode, OhlcvCandle, Timeframe } from '../../trading/tradingTypes';
 
 export const tradingRoutes = Router();
@@ -21,13 +22,44 @@ tradingRoutes.get('/overview', async (req, res) => {
   if (!identity) return;
   const mgr = getCapitalRiskManager();
   const journalSvc = getTradingJournalService();
-  const [session, riskConfig, watchlist, journal] = await Promise.all([
+  const sessionEngine = getMarketSessionEngine();
+  const [session, riskConfig, watchlist, journal, sessionStatus, capitalStatus] = await Promise.all([
     mgr.getSessionCapital(identity.actorId),
     mgr.getRiskConfig(identity.actorId),
     journalSvc.listWatchlist(identity.actorId),
     journalSvc.listJournal(identity.actorId, 30),
+    sessionEngine.getSessionStatus(new Date(), 'NSE'),
+    mgr.checkCapitalStatus(identity.actorId),
   ]);
-  res.json({ session, riskConfig, watchlist, journal });
+  res.json({ session, riskConfig, watchlist, journal, sessionStatus, capitalStatus });
+});
+
+tradingRoutes.get('/session', (_req, res) => {
+  const status = getMarketSessionEngine().getSessionStatus();
+  res.json({ session: status });
+});
+
+tradingRoutes.get('/capital/status', async (req, res) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  const status = await getCapitalRiskManager().checkCapitalStatus(identity.actorId);
+  res.json(status);
+});
+
+tradingRoutes.get('/journal/analytics', async (req, res) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  const analytics = await getTradingJournalService().getJournalAnalytics(identity.actorId);
+  res.json({ analytics });
+});
+
+tradingRoutes.post('/scan', async (req, res) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  const { timeframe = '5m' } = req.body || {};
+  const instruments = Object.values(STANDARD_INSTRUMENTS);
+  const scanResult = await scanMultipleInstruments(instruments, getMarketDataRegistry(), timeframe);
+  res.json(scanResult);
 });
 
 tradingRoutes.post('/capital/confirm', async (req, res) => {

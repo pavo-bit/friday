@@ -26,6 +26,7 @@ export interface BacktestMetrics {
   totalNetPnlFormatted: string;
   totalChargesMinor: number;
   totalChargesFormatted: string;
+  benchmarkReturnPct: number;
 }
 
 export interface BacktestResult {
@@ -37,6 +38,7 @@ export interface BacktestResult {
   isHistoricalSimulation: true;
   disclaimer: string;
   inSample: BacktestMetrics;
+  metrics?: BacktestMetrics;
   outOfSample: BacktestMetrics | null;
 }
 
@@ -171,6 +173,10 @@ function simulateSlice(params: {
     totalNetPnlFormatted: formatMinorUnits(totalNet),
     totalChargesMinor,
     totalChargesFormatted: formatMinorUnits(totalChargesMinor),
+    benchmarkReturnPct:
+      candles.length >= 2 && candles[0].openMinor > 0
+        ? Math.round(((candles[candles.length - 1].closeMinor - candles[0].openMinor) / candles[0].openMinor) * 10_000) / 100
+        : 0,
   };
 }
 
@@ -185,7 +191,8 @@ export async function runBacktest(params: {
   quantity?: number;
   inSampleRatio?: number;
 }): Promise<BacktestResult> {
-  const strategy = BUILTIN_STRATEGIES.find((s) => s.id === params.strategyId);
+  const normalizedId = params.strategyId.replace(/-/g, '_');
+  const strategy = BUILTIN_STRATEGIES.find((s) => s.id === params.strategyId || s.id === normalizedId);
   if (!strategy) {
     throw new Error(`Unknown strategy "${params.strategyId}"`);
   }
@@ -230,7 +237,7 @@ export async function runBacktest(params: {
   const runId = uuidv4();
   const result: BacktestResult = {
     runId,
-    strategyId: strategy.id,
+    strategyId: params.strategyId,
     strategyVersion: strategy.version,
     symbol: params.instrument.symbol,
     timeframe: params.timeframe,
@@ -238,6 +245,7 @@ export async function runBacktest(params: {
     disclaimer:
       'Historical simulation only. Past backtest performance does not guarantee future live trading results.',
     inSample,
+    metrics: inSample,
     outOfSample,
   };
 

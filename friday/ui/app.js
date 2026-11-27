@@ -741,6 +741,50 @@
         capEl.textContent = 'Unconfirmed';
       }
 
+      // Update Market Session Status Banner
+      if (data.sessionStatus) {
+        const sess = data.sessionStatus;
+        const badge = document.getElementById('trdSessionStateBadge');
+        const desc = document.getElementById('trdSessionDescription');
+        const next = document.getElementById('trdNextSessionOpen');
+        if (badge && desc) {
+          badge.textContent = `NSE/BSE: ${sess.state.replace(/_/g, ' ')}`;
+          if (sess.isOpen) {
+            badge.style.background = 'rgba(16, 185, 129, 0.2)';
+            badge.style.color = '#10b981';
+          } else if (sess.state === 'PRE_OPEN' || sess.state === 'POST_CLOSE') {
+            badge.style.background = 'rgba(245, 158, 11, 0.2)';
+            badge.style.color = '#f59e0b';
+          } else {
+            badge.style.background = '#1e293b';
+            badge.style.color = 'var(--muted)';
+          }
+          desc.textContent = sess.description || sess.state;
+          if (next && sess.nextSessionOpen) {
+            const nextDate = new Date(sess.nextSessionOpen);
+            next.textContent = `Next Open: ${nextDate.toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })} IST`;
+          }
+        }
+      }
+
+      // Update Capital Status Warning Prompt
+      if (data.capitalStatus) {
+        const warnCard = document.getElementById('trdCapitalWarningCard');
+        const warnText = document.getElementById('trdCapitalWarningText');
+        if (warnCard && warnText) {
+          if (data.capitalStatus.needsConfirmation) {
+            warnCard.style.display = 'block';
+            warnText.textContent = data.capitalStatus.message;
+            if (data.capitalStatus.suggestedCapital && !document.getElementById('trdAllocCap').value) {
+              const suggested = (data.capitalStatus.suggestedCapital.allocatedCapitalMinor / 100).toFixed(2);
+              document.getElementById('trdAllocCap').placeholder = `Allocated Trading Capital (Last: ₹${suggested})`;
+            }
+          } else {
+            warnCard.style.display = 'none';
+          }
+        }
+      }
+
       const rc = data.riskConfig;
       document.getElementById('trdRiskConfigSub').textContent = rc
         ? `Max risk ${(rc.maxRiskPerTradeBps / 100).toFixed(2)}% · Daily ${(rc.maxDailyLossBps / 100).toFixed(2)}%`
@@ -791,9 +835,137 @@
           jEl.appendChild(item);
         }
       }
+
+      // Load Journal Analytics
+      loadTradingAnalytics();
     } catch {
       // Ignore transient trading load errors
     }
+  }
+
+  async function loadTradingAnalytics() {
+    try {
+      const res = await api('/friday/trading/journal/analytics');
+      if (!res || !res.analytics) return;
+      const a = res.analytics;
+      const winRateEl = document.getElementById('trdWinRateVal');
+      const winRateSub = document.getElementById('trdWinRateSub');
+      const pfEl = document.getElementById('trdProfitFactorVal');
+      const riskAdhEl = document.getElementById('trdRiskAdherenceVal');
+      const pnlEl = document.getElementById('trdAllTimePnlVal');
+      const mistakeSub = document.getElementById('trdMistakeSub');
+
+      if (winRateEl) winRateEl.textContent = `${a.winRatePct.toFixed(1)}%`;
+      if (winRateSub) winRateSub.textContent = `${a.totalTrades} trades (${a.winningTrades}W / ${a.losingTrades}L)`;
+      if (pfEl) pfEl.textContent = a.profitFactor >= 99 ? 'Inf' : a.profitFactor.toFixed(2);
+      if (riskAdhEl) riskAdhEl.textContent = `${a.riskAdherencePct.toFixed(1)}%`;
+      if (pnlEl) pnlEl.textContent = a.netRealizedPnlFormatted;
+      if (mistakeSub && a.mistakeBreakdown && a.mistakeBreakdown.length > 0) {
+        const topMistake = a.mistakeBreakdown[0];
+        mistakeSub.textContent = `Top mistake: ${topMistake.mistake.replace(/_/g, ' ')} (${topMistake.count})`;
+      }
+    } catch {
+      // Ignore
+    }
+  }
+
+  async function scanTradingSetups() {
+    const listEl = document.getElementById('trdSetupsList');
+    const scanBtn = document.getElementById('trdScanBtn');
+    if (!listEl) return;
+    try {
+      if (scanBtn) {
+        scanBtn.disabled = true;
+        scanBtn.textContent = 'Scanning...';
+      }
+      listEl.textContent = '';
+      const loading = document.createElement('div');
+      loading.className = 'hint';
+      loading.textContent = 'Scanning NSE/BSE cash equities across 5 strategies...';
+      listEl.appendChild(loading);
+
+      const res = await api('/friday/trading/scan', {
+        method: 'POST',
+        body: JSON.stringify({ timeframe: '5m' }),
+      });
+
+      listEl.textContent = '';
+      const setups = (res && res.setups) || [];
+      if (setups.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'hint';
+        empty.textContent = `No active intraday setups triggered right now across ${res.totalInstrumentsScanned || 7} instruments.`;
+        listEl.appendChild(empty);
+        return;
+      }
+
+      for (const s of setups) {
+        const item = document.createElement('div');
+        item.className = 'list-item';
+        item.style.display = 'flex';
+        item.style.flexDirection = 'column';
+        item.style.gap = '6px';
+
+        const header = document.createElement('div');
+        header.style.display = 'flex';
+        header.style.justifyContent = 'space-between';
+        header.style.alignItems = 'center';
+
+        const title = document.createElement('div');
+        title.className = 'list-item-title';
+        title.innerHTML = `<strong>${s.instrument.symbol}</strong> <span style="color: ${s.direction === 'LONG' ? '#10b981' : '#ef4444'}; font-weight: bold;">${s.direction}</span> · ${s.strategyName}`;
+
+        const confBadge = document.createElement('span');
+        confBadge.className = 'badge';
+        const tier = s.confidenceTier || (s.confidenceScore >= 0.8 ? 'HIGH' : s.confidenceScore >= 0.65 ? 'MEDIUM' : 'LOW');
+        confBadge.textContent = `${tier} (${Math.round((s.confidenceScore || s.confidence || 0.7) * 100)}%)`;
+        if (tier === 'HIGH') {
+          confBadge.style.background = 'rgba(16, 185, 129, 0.2)';
+          confBadge.style.color = '#10b981';
+        } else if (tier === 'MEDIUM') {
+          confBadge.style.background = 'rgba(59, 130, 246, 0.2)';
+          confBadge.style.color = '#60a5fa';
+        } else {
+          confBadge.style.background = 'rgba(245, 158, 11, 0.2)';
+          confBadge.style.color = '#fbbf24';
+        }
+
+        header.appendChild(title);
+        header.appendChild(confBadge);
+
+        const levels = document.createElement('div');
+        levels.className = 'list-item-sub';
+        levels.style.fontFamily = 'var(--font-mono)';
+        levels.textContent = `Entry: ₹${(s.suggestedEntryMinor / 100).toFixed(2)} | SL: ₹${(s.stopLossMinor / 100).toFixed(2)} | Target: ₹${(s.targetMinor / 100).toFixed(2)} | R:R ${s.riskRewardRatio}:1`;
+
+        const expl = document.createElement('div');
+        expl.style.fontSize = '12px';
+        expl.style.color = 'var(--muted)';
+        expl.textContent = s.signalQualityExplanation || (s.reasons && s.reasons.join(' · ')) || '';
+
+        item.appendChild(header);
+        item.appendChild(levels);
+        if (expl.textContent) item.appendChild(expl);
+        listEl.appendChild(item);
+      }
+    } catch (err) {
+      listEl.textContent = '';
+      const errEl = document.createElement('div');
+      errEl.className = 'hint';
+      errEl.style.color = '#ef4444';
+      errEl.textContent = `Failed to scan setups: ${err.message}`;
+      listEl.appendChild(errEl);
+    } finally {
+      if (scanBtn) {
+        scanBtn.disabled = false;
+        scanBtn.textContent = 'Scan Setups';
+      }
+    }
+  }
+
+  const scanBtn = document.getElementById('trdScanBtn');
+  if (scanBtn) {
+    scanBtn.addEventListener('click', () => scanTradingSetups());
   }
 
   const trdCapitalForm = document.getElementById('trdCapitalForm');

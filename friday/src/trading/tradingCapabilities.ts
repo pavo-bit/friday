@@ -4,17 +4,24 @@
 // ============================================================
 
 import { formatMinorUnits, toMinorUnits } from '../finance/money';
-import type { CapabilityRegistry } from '../orchestration/toolRegistry';
+import { CapabilityRegistry, getToolRegistry } from '../orchestration/toolRegistry';
 import { runBacktest } from './backtester';
 import { getCapitalRiskManager } from './capitalRiskManager';
 import { analyzeIndicators } from './indicators';
 import { getTradingJournalService } from './journalAlerts';
-import { getMarketDataProvider } from './marketData';
-import { evaluateStrategies } from './strategyEngine';
+import { getMarketDataProvider, STANDARD_INSTRUMENTS, getMarketDataRegistry } from './marketData';
+import { evaluateStrategies, scanMultipleInstruments } from './strategyEngine';
+import { getMarketSessionEngine } from './sessionEngine';
 import { ExchangeCode, Timeframe } from './tradingTypes';
 
-export function registerTradingCapabilities(registry: CapabilityRegistry): void {
-  registry.register({
+export function registerTradingCapabilities(registry: CapabilityRegistry = getToolRegistry()): void {
+  const registerSafe = (cap: Parameters<CapabilityRegistry['register']>[0]) => {
+    if (!registry.get(cap.id!)) {
+      registry.register(cap);
+    }
+  };
+
+  registerSafe({
     id: 'trading.analyze_stock',
     name: 'trading_analyze_stock',
     description:
@@ -73,7 +80,7 @@ export function registerTradingCapabilities(registry: CapabilityRegistry): void 
     },
   });
 
-  registry.register({
+  registerSafe({
     id: 'trading.risk_budget',
     name: 'trading_risk_budget',
     description: 'Show current trading session capital, reserved capital, and remaining daily risk budget.',
@@ -120,7 +127,7 @@ export function registerTradingCapabilities(registry: CapabilityRegistry): void 
     },
   });
 
-  registry.register({
+  registerSafe({
     id: 'trading.position_size',
     name: 'trading_position_size',
     description:
@@ -181,7 +188,7 @@ export function registerTradingCapabilities(registry: CapabilityRegistry): void 
     },
   });
 
-  registry.register({
+  registerSafe({
     id: 'trading.journal_review',
     name: 'trading_journal_review',
     description: 'Review user-entered trading journal entries and realized P&L.',
@@ -222,7 +229,7 @@ export function registerTradingCapabilities(registry: CapabilityRegistry): void 
     },
   });
 
-  registry.register({
+  registerSafe({
     id: 'trading.backtest',
     name: 'trading_backtest',
     description:
@@ -276,6 +283,110 @@ export function registerTradingCapabilities(registry: CapabilityRegistry): void 
         verified: true,
         data: res,
         message: `Historical simulation (${res.strategyId} on ${symbol}): ${res.inSample.tradesCount} in-sample trades, win rate ${res.inSample.winRatePct}%, net P&L ${res.inSample.totalNetPnlFormatted}.`,
+      };
+    },
+  });
+
+  registerSafe({
+    id: 'trading.market_session',
+    name: 'trading_market_session',
+    description: 'Check current NSE and BSE trading session state, pre-open hours, trading holiday calendar, and next market open time.',
+    category: 'trading',
+    version: '1.0.0',
+    riskLevel: 'low',
+    permissions: ['trading:read'],
+    timeoutMs: 5_000,
+    trusted: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        exchange: { type: 'string', enum: ['NSE', 'BSE'] },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        state: { type: 'string' },
+        isOpenForTrading: { type: 'boolean' },
+      },
+      required: ['state', 'isOpenForTrading'],
+    },
+    execute: async (args) => {
+      const exchange: ExchangeCode = args.exchange === 'BSE' ? 'BSE' : 'NSE';
+      const engine = getMarketSessionEngine();
+      const status = engine.getSessionStatus(new Date(), exchange);
+      return {
+        verified: true,
+        data: status,
+        message: status.description,
+      };
+    },
+  });
+
+  registerSafe({
+    id: 'trading.scan_setups',
+    name: 'trading_scan_setups',
+    description: 'Scan major NSE/BSE intraday benchmark and high-volume stocks for verified strategy setups, ranked by confidence and reward-to-risk.',
+    category: 'trading',
+    version: '1.0.0',
+    riskLevel: 'low',
+    permissions: ['trading:read'],
+    timeoutMs: 8_000,
+    trusted: true,
+    inputSchema: {
+      type: 'object',
+      properties: {
+        timeframe: { type: 'string', enum: ['5m', '15m', '1h'] },
+      },
+    },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        scannedCount: { type: 'number' },
+        candidates: { type: 'array' },
+      },
+      required: ['scannedCount', 'candidates'],
+    },
+    execute: async (args) => {
+      const timeframe: Timeframe =
+        args.timeframe === '15m' || args.timeframe === '1h' ? args.timeframe : '5m';
+      const instruments = Object.values(STANDARD_INSTRUMENTS);
+      const scanRes = await scanMultipleInstruments(instruments, getMarketDataRegistry(), timeframe);
+
+      return {
+        verified: true,
+        data: scanRes,
+        message: `Scanned ${scanRes.scannedCount} instrument(s); found ${scanRes.candidates.length} verified candidate setup(s).`,
+      };
+    },
+  });
+
+  registerSafe({
+    id: 'trading.capital_status',
+    name: 'trading_capital_status',
+    description: 'Check whether user trading capital is confirmed for today, view historical capital snapshots, or determine if user confirmation is required.',
+    category: 'trading',
+    version: '1.0.0',
+    riskLevel: 'low',
+    permissions: ['trading:read'],
+    timeoutMs: 5_000,
+    trusted: true,
+    inputSchema: { type: 'object', properties: {} },
+    outputSchema: {
+      type: 'object',
+      properties: {
+        confirmed: { type: 'boolean' },
+        promptRequired: { type: 'boolean' },
+      },
+      required: ['confirmed', 'promptRequired'],
+    },
+    execute: async (_args, ctx) => {
+      const ownerId = ctx.actor || 'local';
+      const res = await getCapitalRiskManager().checkCapitalStatus(ownerId);
+      return {
+        verified: true,
+        data: res,
+        message: res.message,
       };
     },
   });
