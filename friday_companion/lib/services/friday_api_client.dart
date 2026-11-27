@@ -5,9 +5,15 @@ import '../models/friday_models.dart';
 class FridayApiException implements Exception {
   final String message;
   final bool isOffline;
+  final bool isSessionExpired;
   final int? statusCode;
 
-  FridayApiException(this.message, {this.isOffline = false, this.statusCode});
+  FridayApiException(
+    this.message, {
+    this.isOffline = false,
+    this.isSessionExpired = false,
+    this.statusCode,
+  });
 
   @override
   String toString() => message;
@@ -18,6 +24,7 @@ class FridayApiClient {
   String? bearerToken;
   String? deviceId;
   bool brainOnline = false;
+  bool sessionExpired = false;
   final http.Client _http;
 
   FridayApiClient({
@@ -71,6 +78,15 @@ class FridayApiClient {
       final decoded = res.body.isNotEmpty
           ? jsonDecode(res.body) as Map<String, dynamic>
           : <String, dynamic>{};
+      if (res.statusCode == 401) {
+        sessionExpired = true;
+        bearerToken = null;
+        throw FridayApiException(
+          decoded['error']?.toString() ?? 'Session expired or device revoked. Please pair again.',
+          isSessionExpired: true,
+          statusCode: 401,
+        );
+      }
       if (res.statusCode >= 400) {
         throw FridayApiException(
           decoded['error']?.toString() ?? 'Request failed (${res.statusCode})',
@@ -115,9 +131,85 @@ class FridayApiClient {
     return res;
   }
 
-  Future<String> sendMessage(String text) async {
-    final res = await _request('POST', '/friday/run', body: {'text': text});
+  Future<String> sendMessage(String text, {String sessionId = 'default'}) async {
+    final res = await sendMessageFull(text, sessionId: sessionId);
     return res['output']?.toString() ?? res['error']?.toString() ?? 'Done.';
+  }
+
+  Future<Map<String, dynamic>> sendMessageFull(
+    String text, {
+    String sessionId = 'default',
+    String channel = 'android',
+  }) async {
+    return _request('POST', '/friday/run', body: {
+      'text': text,
+      'sessionId': sessionId,
+      'channel': channel,
+    });
+  }
+
+  Future<List<Map<String, dynamic>>> getConversationHistory(
+      {String sessionId = 'default', int limit = 25}) async {
+    final res = await _request(
+        'GET', '/friday/conversations?sessionId=$sessionId&limit=$limit');
+    return List<Map<String, dynamic>>.from(res['messages'] ?? const []);
+  }
+
+  // ---- Phase 18: Cross-Device Identity, Personality, Projects & Learning ----
+  Future<Map<String, dynamic>> getIdentityBundle() async {
+    return _request('GET', '/friday/identity');
+  }
+
+  Future<Map<String, dynamic>> updateIdentity(Map<String, dynamic> patch) async {
+    return _request('PUT', '/friday/identity', body: patch);
+  }
+
+  Future<Map<String, dynamic>> getPersonality() async {
+    return _request('GET', '/friday/personality');
+  }
+
+  Future<Map<String, dynamic>> updatePersonality(Map<String, dynamic> patch) async {
+    return _request('PUT', '/friday/personality', body: patch);
+  }
+
+  Future<Map<String, dynamic>> listProjects() async {
+    return _request('GET', '/friday/identity/projects');
+  }
+
+  Future<Map<String, dynamic>> switchProject(String projectName) async {
+    return _request('POST', '/friday/identity/projects/switch',
+        body: {'projectName': projectName});
+  }
+
+  Future<List<Map<String, dynamic>>> listLearningRecords({int limit = 20}) async {
+    final res = await _request('GET', '/friday/learning/records?limit=$limit');
+    return List<Map<String, dynamic>>.from(res['records'] ?? const []);
+  }
+
+  Future<List<Map<String, dynamic>>> listProcedures() async {
+    final res = await _request('GET', '/friday/learning/procedures');
+    return List<Map<String, dynamic>>.from(res['procedures'] ?? const []);
+  }
+
+  Future<Map<String, dynamic>> approveProcedure(String procedureId) async {
+    return _request('POST', '/friday/learning/procedures/$procedureId/approve',
+        body: {'approvedByHuman': true});
+  }
+
+  Future<Map<String, dynamic>> recordCorrection(
+      {required String subject, required String correction}) async {
+    return _request('POST', '/friday/learning/correction',
+        body: {'subject': subject, 'correction': correction});
+  }
+
+  Future<Map<String, dynamic>> getOllamaStatus() async {
+    return _request('GET', '/friday/ollama/status');
+  }
+
+  void logout() {
+    bearerToken = null;
+    deviceId = null;
+    sessionExpired = false;
   }
 
   Future<List<WatcherItem>> listWatchers() async {

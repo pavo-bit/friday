@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Router, Request, Response } from 'express';
-import { resolveCallerIdentity } from '../authContext';
+import { ActorImpersonationError, enforceActorScope, resolveCallerIdentity } from '../authContext';
 import { getPersonalIdentityService } from '../../identity/identityService';
 import { getProjectContextService } from '../../identity/projectContextService';
 import { IdentityPolicyError } from '../../identity/identityPolicy';
@@ -18,11 +18,12 @@ identityRoutes.get('/', async (req: Request, res: Response) => {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const actorId = (req.query.actorId as string) || identity.actorId;
+    const actorId = enforceActorScope(identity, req.query.actorId as string | undefined);
     const bundle = await getPersonalIdentityService().inspectIdentityBundle(actorId);
     res.json(bundle);
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    const status = err instanceof ActorImpersonationError ? 403 : 500;
+    res.status(status).json({ error: (err as Error).message });
   }
 });
 
@@ -35,11 +36,11 @@ identityRoutes.put('/', async (req: Request, res: Response) => {
       return;
     }
     const body = (req.body || {}) as Record<string, unknown>;
-    const actorId = (body.actorId as string) || identity.actorId;
+    const actorId = enforceActorScope(identity, body.actorId as string | undefined);
     const profile = await getPersonalIdentityService().createOrUpdateProfile(actorId, body);
     res.json({ profile });
   } catch (err) {
-    const status = err instanceof IdentityPolicyError ? 400 : 500;
+    const status = err instanceof ActorImpersonationError ? 403 : err instanceof IdentityPolicyError ? 400 : 500;
     res.status(status).json({ error: (err as Error).message });
   }
 });

@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/friday_api_client.dart';
+import 'identity_screen.dart';
+import 'projects_screen.dart';
+import 'learning_screen.dart';
 
 class HomeDashboardScreen extends StatefulWidget {
   final FridayApiClient client;
@@ -75,6 +78,18 @@ class _HomeDashboardScreenState extends State<HomeDashboardScreen> {
           children: [
             _tile(Icons.chat, 'Conversation', () => widget.onNavigateTab(1)),
             _tile(Icons.mic, 'Voice Assistant', widget.onOpenVoice),
+            _tile(Icons.person_outline, 'Identity', () {
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => IdentityScreen(client: widget.client)));
+            }),
+            _tile(Icons.folder_copy, 'Projects', () {
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => ProjectsScreen(client: widget.client)));
+            }),
+            _tile(Icons.school, 'Learning', () {
+              Navigator.of(context).push(MaterialPageRoute(
+                  builder: (_) => LearningScreen(client: widget.client)));
+            }),
             _tile(Icons.monitor_heart, 'Monitoring',
                 () => widget.onNavigateTab(2)),
             _tile(Icons.alarm, 'Reminders', () => widget.onNavigateTab(3)),

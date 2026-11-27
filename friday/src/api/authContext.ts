@@ -70,3 +70,23 @@ export async function requireCallerIdentity(
   }
   return identity;
 }
+
+export class ActorImpersonationError extends Error {
+  constructor(message = 'Forbidden: cannot impersonate another actor identity.') {
+    super(message);
+    this.name = 'ActorImpersonationError';
+  }
+}
+
+/**
+ * Prevent remote paired devices from impersonating another actorId.
+ */
+export function enforceActorScope(identity: CallerIdentity, requestedActorId?: string): string {
+  const trimmed = requestedActorId?.trim();
+  if (!trimmed) return identity.actorId;
+  if (identity.isLocal) return trimmed;
+  if (trimmed === identity.actorId || trimmed === identity.deviceId) {
+    return trimmed;
+  }
+  throw new ActorImpersonationError();
+}

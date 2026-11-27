@@ -19,6 +19,33 @@ class _ConversationScreenState extends State<ConversationScreen> {
         timestamp: ''),
   ];
   bool _sending = false;
+  String _activePersonality = 'ADAPTIVE';
+
+  @override
+  void initState() {
+    super.initState();
+    _syncHistory();
+  }
+
+  Future<void> _syncHistory() async {
+    try {
+      final hist = await widget.client.getConversationHistory(limit: 15);
+      if (mounted && hist.isNotEmpty) {
+        setState(() {
+          _messages.clear();
+          for (final m in hist) {
+            _messages.add(ChatMessage(
+              role: m['role']?.toString() ?? 'assistant',
+              text: m['content']?.toString() ?? '',
+              timestamp: m['createdAt']?.toString() ?? '',
+            ));
+          }
+        });
+      }
+    } catch (_) {
+      // Keep default greeting when offline
+    }
+  }
 
   Future<void> _send() async {
     final text = _ctrl.text.trim();
@@ -29,9 +56,15 @@ class _ConversationScreenState extends State<ConversationScreen> {
       _sending = true;
     });
     try {
-      final reply = await widget.client.sendMessage(text);
-      setState(() => _messages
-          .add(ChatMessage(role: 'assistant', text: reply, timestamp: 'Now')));
+      final res = await widget.client.sendMessageFull(text, channel: 'android');
+      final reply = res['output']?.toString() ?? res['error']?.toString() ?? 'Done.';
+      final meta = res['personalityMeta'] as Map<String, dynamic>?;
+      setState(() {
+        if (meta != null && meta['activeProfile'] != null) {
+          _activePersonality = meta['activeProfile'].toString();
+        }
+        _messages.add(ChatMessage(role: 'assistant', text: reply, timestamp: 'Now'));
+      });
     } catch (e) {
       setState(() => _messages.add(ChatMessage(
           role: 'assistant', text: e.toString(), timestamp: 'Offline')));
@@ -44,6 +77,21 @@ class _ConversationScreenState extends State<ConversationScreen> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('Mode: $_activePersonality',
+                  style: const TextStyle(fontSize: 12, color: Colors.lightBlueAccent)),
+              IconButton(
+                icon: const Icon(Icons.sync, size: 18),
+                onPressed: _syncHistory,
+                tooltip: 'Sync conversation',
+              ),
+            ],
+          ),
+        ),
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.all(12),

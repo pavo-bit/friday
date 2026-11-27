@@ -63,6 +63,45 @@ fridayRoutes.post('/run', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /friday/conversations
+ * Retrieve actor-isolated conversation history for cross-device sync (Phase 17/18).
+ */
+fridayRoutes.get('/conversations', async (req: Request, res: Response) => {
+  const identity = await resolveCallerIdentity(req);
+  if (!identity) {
+    res.status(401).json({ error: 'Unauthorized: valid bearer token required' });
+    return;
+  }
+  const sessionId = (req.query.sessionId as string) || 'default';
+  const limit = Math.min(100, Math.max(1, parseInt((req.query.limit as string) || '25', 10)));
+  const store = await getMemoryStore();
+  const messages = store.getRecentConversations(limit, sessionId, identity.actorId);
+  res.json({ sessionId, actorId: identity.actorId, messages });
+});
+
+/**
+ * GET /friday/conversations/summary
+ * Concise deterministic conversation summary for continuity & restart recovery.
+ */
+fridayRoutes.get('/conversations/summary', async (req: Request, res: Response) => {
+  const identity = await resolveCallerIdentity(req);
+  if (!identity) {
+    res.status(401).json({ error: 'Unauthorized: valid bearer token required' });
+    return;
+  }
+  const sessionId = (req.query.sessionId as string) || 'default';
+  const store = await getMemoryStore();
+  const messages = store.getRecentConversations(12, sessionId, identity.actorId);
+  const state = store.getConversationContextState(identity.actorId, sessionId);
+  const userTurns = messages.filter((m) => m.role === 'user').map((m) => m.content);
+  const summary =
+    messages.length === 0
+      ? 'No prior turns in this conversation.'
+      : `Conversation "${sessionId}" has ${messages.length} recent turn(s). Active topic: ${state.activeTopic || userTurns[userTurns.length - 1] || 'General'}.`;
+  res.json({ sessionId, actorId: identity.actorId, turnCount: messages.length, state, summary });
+});
+
+/**
  * POST /friday/voice
  *
  * Voice endpoint — accepts audio data, transcribes with Whisper,

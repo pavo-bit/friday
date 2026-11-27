@@ -3,7 +3,7 @@
 // ============================================================
 
 import { Router, Request, Response } from 'express';
-import { resolveCallerIdentity } from '../authContext';
+import { ActorImpersonationError, enforceActorScope, resolveCallerIdentity } from '../authContext';
 import { getContinuousLearningEngine } from '../../learning/learningEngine';
 import { LearningKind, LearningSourceType, SourceQuality } from '../../learning/learningTypes';
 
@@ -60,7 +60,7 @@ learningRoutes.get('/records', async (req: Request, res: Response) => {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
-    const actorId = (req.query.actorId as string) || identity.actorId;
+    const actorId = enforceActorScope(identity, req.query.actorId as string | undefined);
     const kind = req.query.kind as LearningKind | undefined;
     const projectName = req.query.projectName as string | undefined;
     const query = req.query.query as string | undefined;
@@ -75,7 +75,8 @@ learningRoutes.get('/records', async (req: Request, res: Response) => {
     });
     res.json({ records });
   } catch (err) {
-    res.status(500).json({ error: (err as Error).message });
+    const status = err instanceof ActorImpersonationError ? 403 : 500;
+    res.status(status).json({ error: (err as Error).message });
   }
 });
 

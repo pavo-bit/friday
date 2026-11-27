@@ -340,7 +340,7 @@ assistantRoutes.delete('/personality/override', async (req: Request, res: Respon
 });
 
 assistantRoutes.get('/ollama/status', async (_req: Request, res: Response) => {
-  const status = await getOllamaClient().checkStatus();
+  const status = await getOllamaClient().getDiagnostics();
   res.json(status);
 });
 
