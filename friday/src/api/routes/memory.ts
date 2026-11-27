@@ -5,8 +5,15 @@
 
 import { Router, Request, Response } from 'express';
 import { getMemoryStore } from '../../memory/store';
+import { requireCallerIdentity } from '../authContext';
 
 export const memoryRoutes = Router();
+
+memoryRoutes.use(async (req, res, next) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  next();
+});
 
 /**
  * POST /friday/memory/store

@@ -9,11 +9,21 @@ import { getVoiceService } from '../../voice/voiceService';
 import { getWindowsLifecycleManager } from '../../voice/windowsLifecycle';
 import { getSpeechRecognitionEngine } from '../../voice/speechRecognition';
 import { getSpeechSynthesisEngine } from '../../voice/speechSynthesis';
-import { resolveCallerIdentity } from '../authContext';
+import { requireCallerIdentity } from '../authContext';
 
 const log = createLayerLogger('VoiceRoutes');
 
 export const voiceRoutes = Router();
+
+voiceRoutes.use(async (req, res, next) => {
+  if (req.method === 'GET' && (req.path === '/status' || req.path === '/health')) {
+    next();
+    return;
+  }
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  next();
+});
 
 /**
  * GET /friday/voice/status

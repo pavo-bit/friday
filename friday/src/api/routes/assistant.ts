@@ -15,9 +15,19 @@ import { getMemoryStore } from '../../memory/store';
 import { getToolRegistry } from '../../orchestration/toolRegistry';
 import { getOpenRouterProvider } from '../../ai/providers/OpenRouterProvider';
 import { getConfig } from '../../shared/config';
-import { resolveActorOrRespond, resolveCallerIdentity } from '../authContext';
+import { requireCallerIdentity, resolveActorOrRespond, resolveCallerIdentity } from '../authContext';
 
 export const assistantRoutes = Router();
+
+assistantRoutes.use(async (req, res, next) => {
+  if (req.path === '/auth/pair' || req.path === '/ai/status' || req.path === '/tools') {
+    next();
+    return;
+  }
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  next();
+});
 
 // ---- Watchers & Advanced Monitoring (Phase 4 / Phase 15) ----
 assistantRoutes.get('/watchers', async (req: Request, res: Response) => {
@@ -381,6 +391,12 @@ assistantRoutes.get('/tools', (_req: Request, res: Response) => {
 
 // ---- Security, Audit Logs, Backups & Device Pairing (Phase 10) ----
 assistantRoutes.get('/audit', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  if (!identity.isLocal) {
+    res.status(403).json({ error: 'Forbidden: local owner session required to view audit logs' });
+    return;
+  }
   const limit = parseInt((req.query.limit as string) || '50', 10);
   const store = await getMemoryStore();
   res.json({ logs: store.getAuditLogs(limit) });
@@ -434,12 +450,24 @@ assistantRoutes.post('/auth/pair', async (req: Request, res: Response) => {
   }
 });
 
-assistantRoutes.get('/auth/devices', async (_req: Request, res: Response) => {
+assistantRoutes.get('/auth/devices', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  if (!identity.isLocal) {
+    res.status(403).json({ error: 'Forbidden: local owner session required to list devices' });
+    return;
+  }
   const devices = await getAuthService().listDevices();
   res.json({ devices });
 });
 
 assistantRoutes.post('/auth/devices/:id/rotate', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  if (!identity.isLocal) {
+    res.status(403).json({ error: 'Forbidden: local owner session required to rotate device tokens' });
+    return;
+  }
   const token = await getAuthService().rotateToken(String(req.params.id));
   if (!token) {
     res.status(404).json({ error: 'Device not found' });
@@ -449,6 +477,12 @@ assistantRoutes.post('/auth/devices/:id/rotate', async (req: Request, res: Respo
 });
 
 assistantRoutes.delete('/auth/devices/:id', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  if (!identity.isLocal) {
+    res.status(403).json({ error: 'Forbidden: local owner session required to revoke devices' });
+    return;
+  }
   const revoked = await getAuthService().revokeDevice(String(req.params.id));
   res.status(revoked ? 200 : 404).json({ revoked });
 });

@@ -15,7 +15,7 @@ import { TaskResult } from '../../shared/types';
 import { toStructuredIntent } from '../../intelligence/systemPrompt';
 import { getAssistantBrain } from '../../orchestration/assistantBrain';
 import { InteractionChannel } from '../../personality/personalityTypes';
-import { resolveCallerIdentity } from '../authContext';
+import { requireCallerIdentity, resolveCallerIdentity } from '../authContext';
 
 const log = createLayerLogger('Routes');
 
@@ -171,6 +171,12 @@ fridayRoutes.post('/voice', async (req: Request, res: Response) => {
  * Approve or deny a pending high-risk action.
  */
 fridayRoutes.post('/approve', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
+  if (!identity.isLocal) {
+    res.status(403).json({ error: 'Forbidden: high-risk approval requires local owner session' });
+    return;
+  }
   const { requestId, approved } = req.body as { requestId?: string; approved?: boolean };
 
   if (!requestId || typeof approved !== 'boolean') {
@@ -194,7 +200,9 @@ fridayRoutes.post('/approve', async (req: Request, res: Response) => {
  *
  * Get all pending approval requests.
  */
-fridayRoutes.get('/pending', async (_req: Request, res: Response) => {
+fridayRoutes.get('/pending', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
   const safetyGate = getSafetyGate();
   res.json({ pending: safetyGate.getPendingApprovals() });
 });
@@ -205,6 +213,8 @@ fridayRoutes.get('/pending', async (_req: Request, res: Response) => {
  * Get recent task history.
  */
 fridayRoutes.get('/history', async (req: Request, res: Response) => {
+  const identity = await requireCallerIdentity(req, res);
+  if (!identity) return;
   const limit = parseInt((req.query.limit as string) || '20', 10);
   const router = getTaskRouter();
   res.json({ tasks: router.getRecentTasks(limit) });

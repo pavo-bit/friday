@@ -38,6 +38,12 @@ function parseRetryAfterMs(headerVal: string | null): number | null {
   return null;
 }
 
+export type CircuitState = 'CLOSED' | 'OPEN' | 'HALF_OPEN';
+
+const HEALTH_CACHE_TTL_MS = 15_000;
+const CIRCUIT_BREAKER_THRESHOLD = 3;
+const CIRCUIT_BREAKER_COOLDOWN_MS = 30_000;
+
 export class OpenRouterProvider implements AIProvider {
   readonly name = 'openrouter';
 
@@ -48,6 +54,41 @@ export class OpenRouterProvider implements AIProvider {
   private totalRequests = 0;
   private totalPromptTokens = 0;
   private totalCompletionTokens = 0;
+  private cachedStatus: { status: AIProviderStatus; expiresAt: number } | null = null;
+  private circuitState: CircuitState = 'CLOSED';
+  private circuitOpenedAt = 0;
+  private halfOpenProbeInFlight = false;
+
+  getCircuitState(): CircuitState {
+    if (
+      this.circuitState === 'OPEN' &&
+      Date.now() - this.circuitOpenedAt >= CIRCUIT_BREAKER_COOLDOWN_MS
+    ) {
+      return 'HALF_OPEN';
+    }
+    return this.circuitState;
+  }
+
+  private recordSuccess(): void {
+    this.consecutiveFailures = 0;
+    this.lastError = null;
+    this.lastSuccessAt = new Date().toISOString();
+    this.circuitState = 'CLOSED';
+    this.halfOpenProbeInFlight = false;
+  }
+
+  private recordFailure(message: string, countsTowardBreaker = true): void {
+    this.lastError = message;
+    this.cachedStatus = null;
+    this.halfOpenProbeInFlight = false;
+    if (countsTowardBreaker) {
+      this.consecutiveFailures++;
+      if (this.consecutiveFailures >= CIRCUIT_BREAKER_THRESHOLD) {
+        this.circuitState = 'OPEN';
+        this.circuitOpenedAt = Date.now();
+      }
+    }
+  }
 
   private getConfig(): OpenRouterConfig {
     return loadAIConfig();
@@ -128,8 +169,9 @@ export class OpenRouterProvider implements AIProvider {
 
   /**
    * Probe OpenRouter /models endpoint to verify connectivity, authentication, and model availability.
+   * Uses a short-lived cache unless forceRefresh is true.
    */
-  async checkStatus(timeoutMs = 5_000): Promise<AIProviderStatus> {
+  async checkStatus(timeoutMs = 5_000, options?: { forceRefresh?: boolean }): Promise<AIProviderStatus> {
     const cfg = this.getConfig();
     const correlationId = uuidv4();
     const credErr = this.validateCredentials(cfg, undefined, correlationId);
@@ -148,6 +190,31 @@ export class OpenRouterProvider implements AIProvider {
       };
     }
 
+    if (
+      !options?.forceRefresh &&
+      this.cachedStatus &&
+      Date.now() < this.cachedStatus.expiresAt &&
+      this.cachedStatus.status.configuredModel === cfg.model &&
+      this.cachedStatus.status.baseUrl === cfg.baseUrl
+    ) {
+      return this.cachedStatus.status;
+    }
+
+    const circuit = this.getCircuitState();
+    if (circuit === 'OPEN') {
+      return {
+        provider: this.name,
+        configured: true,
+        reachable: false,
+        baseUrl: cfg.baseUrl,
+        configuredModel: cfg.model,
+        availableModels: [],
+        modelAvailable: false,
+        error: 'OpenRouter circuit breaker is OPEN after repeated failures; waiting for cooldown.',
+        errorCode: 'NETWORK_ERROR',
+      };
+    }
+
     const reqSig = this.createRequestSignal(timeoutMs);
     try {
       const res = await fetch(`${cfg.baseUrl}/models`, {
@@ -159,8 +226,8 @@ export class OpenRouterProvider implements AIProvider {
       if (!res.ok) {
         const body = await res.text();
         const classified = classifyHttpError(res.status, body, correlationId);
-        this.lastError = classified.message;
-        return {
+        this.recordFailure(classified.message, classified.retryable);
+        const failStatus: AIProviderStatus = {
           provider: this.name,
           configured: true,
           reachable: false,
@@ -171,6 +238,8 @@ export class OpenRouterProvider implements AIProvider {
           error: classified.message,
           errorCode: classified.code,
         };
+        this.cachedStatus = { status: failStatus, expiresAt: Date.now() + 3_000 };
+        return failStatus;
       }
 
       const data = (await res.json()) as { data?: Array<{ id?: string }> };
@@ -180,11 +249,9 @@ export class OpenRouterProvider implements AIProvider {
       const modelAvailable =
         availableModels.length === 0 ? true : availableModels.includes(cfg.model);
 
-      this.consecutiveFailures = 0;
-      this.lastError = null;
-      this.lastSuccessAt = new Date().toISOString();
+      this.recordSuccess();
 
-      return {
+      const status: AIProviderStatus = {
         provider: this.name,
         configured: true,
         reachable: true,
@@ -192,12 +259,20 @@ export class OpenRouterProvider implements AIProvider {
         configuredModel: cfg.model,
         availableModels: availableModels.slice(0, 50),
         modelAvailable,
+        ...(modelAvailable
+          ? {}
+          : {
+              error: `Configured model "${cfg.model}" is not available on OpenRouter.`,
+              errorCode: 'MODEL_OR_ENDPOINT_NOT_FOUND',
+            }),
       };
+      this.cachedStatus = { status, expiresAt: Date.now() + HEALTH_CACHE_TTL_MS };
+      return status;
     } catch (err) {
       const msg = reqSig.wasTimeout()
         ? `OpenRouter status check timed out after ${timeoutMs}ms`
         : redactProviderSecrets((err as Error).message || 'OpenRouter status check failed');
-      this.lastError = msg;
+      this.recordFailure(msg, true);
       return {
         provider: this.name,
         configured: true,
@@ -215,7 +290,7 @@ export class OpenRouterProvider implements AIProvider {
   }
 
   async getDiagnostics(timeoutMs = 5_000): Promise<AIProviderDiagnostics> {
-    const status = await this.checkStatus(timeoutMs);
+    const status = await this.checkStatus(timeoutMs, { forceRefresh: true });
     return {
       ...status,
       lastLatencyMs: this.lastLatencyMs,
@@ -255,6 +330,22 @@ export class OpenRouterProvider implements AIProvider {
     const maxAttempts = cfg.maxRetries + 1;
     const endpoint = `${cfg.baseUrl}/chat/completions`;
 
+    const circuit = this.getCircuitState();
+    if (circuit === 'OPEN' || (circuit === 'HALF_OPEN' && this.halfOpenProbeInFlight)) {
+      return {
+        ok: false,
+        content: '',
+        toolCalls: [],
+        latencyMs: Date.now() - started,
+        correlationId,
+        error: 'OpenRouter circuit breaker is OPEN; skipping request until cooldown elapses.',
+        errorCode: 'NETWORK_ERROR',
+      };
+    }
+    if (circuit === 'HALF_OPEN') {
+      this.halfOpenProbeInFlight = true;
+    }
+
     const payload: Record<string, unknown> = {
       model,
       messages: request.messages,
@@ -290,8 +381,7 @@ export class OpenRouterProvider implements AIProvider {
         if (!res.ok) {
           const errText = await res.text();
           const classified = classifyHttpError(res.status, errText, correlationId);
-          this.consecutiveFailures++;
-          this.lastError = classified.message;
+          this.recordFailure(classified.message, classified.retryable);
 
           if (classified.retryable && attempt < maxAttempts) {
             const retryAfterMs = parseRetryAfterMs(res.headers.get('retry-after'));
@@ -390,9 +480,7 @@ export class OpenRouterProvider implements AIProvider {
 
         const latencyMs = Date.now() - started;
         this.lastLatencyMs = latencyMs;
-        this.consecutiveFailures = 0;
-        this.lastError = null;
-        this.lastSuccessAt = new Date().toISOString();
+        this.recordSuccess();
 
         return {
           ok: true,
@@ -413,8 +501,7 @@ export class OpenRouterProvider implements AIProvider {
             ? 'OpenRouter request was cancelled'
             : redactProviderSecrets((err as Error).message || 'OpenRouter network failure');
 
-        this.consecutiveFailures++;
-        this.lastError = safeMsg;
+        this.recordFailure(safeMsg, !isCancelled);
 
         if (!isCancelled && !isTimeout && attempt < maxAttempts) {
           const backoffMs = Math.min(500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 200), 5_000);

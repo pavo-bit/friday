@@ -59,6 +59,20 @@ export function validateAIConfig(config: OpenRouterConfig): string[] {
 
   if (!config.baseUrl || !/^https?:\/\/.+/i.test(config.baseUrl)) {
     errors.push(`Invalid OPENROUTER_BASE_URL: "${config.baseUrl || '(empty)'}"`);
+  } else {
+    try {
+      const parsed = new URL(config.baseUrl);
+      const isLoopback =
+        parsed.hostname === '127.0.0.1' ||
+        parsed.hostname === 'localhost' ||
+        parsed.hostname === '::1' ||
+        parsed.hostname === '[::1]';
+      if (parsed.protocol !== 'https:' && !isLoopback) {
+        errors.push(`Insecure OPENROUTER_BASE_URL "${config.baseUrl}": production OpenRouter endpoints must use HTTPS.`);
+      }
+    } catch {
+      errors.push(`Malformed OPENROUTER_BASE_URL: "${config.baseUrl}"`);
+    }
   }
 
   return errors;

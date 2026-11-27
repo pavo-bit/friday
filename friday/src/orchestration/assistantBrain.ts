@@ -54,8 +54,30 @@ export interface AssistantProcessOptions {
   channel?: InteractionChannel;
 }
 
+export type TaskOutcome =
+  | 'COMPLETE'
+  | 'PARTIALLY_COMPLETE'
+  | 'FAILED'
+  | 'WAITING_FOR_APPROVAL'
+  | 'MAX_ITERATIONS_REACHED'
+  | 'VERIFICATION_FAILED';
+
+export interface ToolExecutionLedgerEntry {
+  toolCallId: string;
+  capabilityName: string;
+  arguments: Record<string, unknown>;
+  executionStatus: 'success' | 'failed' | 'blocked_approval' | 'duplicate_skipped';
+  verificationStatus: 'verified' | 'unverified';
+  approvalRequired: boolean;
+  durationMs: number;
+  error?: string;
+  resultRef?: string;
+}
+
 export interface AssistantProcessResponse extends TaskResult {
   toolResult?: ToolExecutionResult;
+  executionLedger?: ToolExecutionLedgerEntry[];
+  taskOutcome?: TaskOutcome;
   plan?: ExecutionPlan;
   backgroundTaskId?: string;
   executiveDecision?: ExecutiveDecision;
@@ -68,6 +90,20 @@ export interface AssistantProcessResponse extends TaskResult {
     planning: number;
     total: number;
   };
+}
+
+function redactArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args || {})) {
+    if (typeof v === 'string') {
+      out[k] = /key|token|secret|pass|auth/i.test(k) ? '[REDACTED]' : redactSecrets(v);
+    } else if (v && typeof v === 'object' && !Array.isArray(v)) {
+      out[k] = redactArgs(v as Record<string, unknown>);
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
 }
 
 export class AssistantBrain {
@@ -183,7 +219,7 @@ export class AssistantBrain {
       const greetingText = personality.buildGreeting(profile, {
         pendingRemindersCount: pendingReminders,
         unhealthyWatchersCount: unhealthy,
-        allSystemsHealthy: unhealthy === 0 && aiStatus.reachable,
+        allSystemsHealthy: unhealthy === 0 && aiStatus.reachable && aiStatus.modelAvailable,
       });
 
       if (!remainder || remainder.length < 3) {
@@ -654,7 +690,7 @@ export class AssistantBrain {
     // 9. OpenRouter Structured Tool Calling & Natural Conversation Generation
     const provider = getOpenRouterProvider();
     const aiStatus = await provider.checkStatus(1_500);
-    if (aiStatus.configured && aiStatus.reachable) {
+    if (aiStatus.configured && aiStatus.reachable && aiStatus.modelAvailable) {
       const systemPrompt = adaptiveEngine.buildAdaptiveSystemPrompt({
         legacyProfile: profile,
         preferredAddress: personalIdentity.preferredAddress,
@@ -687,11 +723,18 @@ export class AssistantBrain {
 
       const MAX_TOOL_ITERATIONS = 5;
       const seenToolSignatures = new Set<string>();
+      const executionLedger: ToolExecutionLedgerEntry[] = [];
       let lastToolResult: ToolExecutionResult | undefined;
       let finalContent = '';
       let overflowRetried = false;
+      let maxIterationsReached = false;
+      let modelFailedAfterTools = false;
+      let modelFailureError: string | undefined;
+      let duplicateLoopDetected = false;
+      let completedIterations = 0;
 
       for (let iteration = 0; iteration < MAX_TOOL_ITERATIONS; iteration++) {
+        completedIterations = iteration + 1;
         let chatRes = await provider.chat({
           model: modelSelection.model,
           messages,
@@ -714,6 +757,10 @@ export class AssistantBrain {
             errorCode: chatRes.errorCode,
             correlationId: chatRes.correlationId,
           });
+          if (executionLedger.length > 0) {
+            modelFailedAfterTools = true;
+            modelFailureError = chatRes.error || 'Model failed after tool execution';
+          }
           break;
         }
 
@@ -736,12 +783,21 @@ export class AssistantBrain {
           })),
         });
 
-        let loopDetected = false;
         for (const call of chatRes.toolCalls) {
           const signature = `${call.name}:${JSON.stringify(call.arguments)}`;
           if (seenToolSignatures.has(signature)) {
             log.warn('Preventing duplicate tool call loop', { tool: call.name });
-            loopDetected = true;
+            duplicateLoopDetected = true;
+            executionLedger.push({
+              toolCallId: call.id,
+              capabilityName: call.name,
+              arguments: redactArgs(call.arguments),
+              executionStatus: 'duplicate_skipped',
+              verificationStatus: 'unverified',
+              approvalRequired: false,
+              durationMs: 0,
+              error: 'Duplicate tool call skipped to prevent infinite loop',
+            });
             messages.push({
               role: 'tool',
               tool_call_id: call.id,
@@ -761,6 +817,23 @@ export class AssistantBrain {
             timezone: profile.timezone,
           });
           lastToolResult = execRes;
+
+          executionLedger.push({
+            toolCallId: call.id,
+            capabilityName: call.name,
+            arguments: redactArgs(call.arguments),
+            executionStatus: execRes.requiresApproval
+              ? 'blocked_approval'
+              : execRes.success
+                ? 'success'
+                : 'failed',
+            verificationStatus: execRes.verified ? 'verified' : 'unverified',
+            approvalRequired: Boolean(execRes.requiresApproval),
+            durationMs: execRes.durationMs,
+            error: execRes.error,
+            resultRef: execRes.taskId || call.id,
+          });
+
           messages.push({
             role: 'tool',
             tool_call_id: call.id,
@@ -775,17 +848,82 @@ export class AssistantBrain {
           });
         }
 
-        if (loopDetected) {
+        if (duplicateLoopDetected) {
           const summaryRes = await provider.chat({ model: modelSelection.model, messages });
-          finalContent = summaryRes.ok && summaryRes.content
-            ? summaryRes.content
-            : lastToolResult?.message || 'Done.';
+          if (summaryRes.ok && summaryRes.content) {
+            finalContent = summaryRes.content;
+          } else {
+            modelFailedAfterTools = true;
+            modelFailureError = summaryRes.error || 'Model failed to summarize after duplicate loop';
+          }
           break;
+        }
+
+        if (completedIterations === MAX_TOOL_ITERATIONS) {
+          maxIterationsReached = true;
         }
       }
 
-      if (lastToolResult) {
-        const finalText = finalContent || lastToolResult.message || 'Done.';
+      if (executionLedger.length > 0) {
+        const executedEntries = executionLedger.filter((e) => e.executionStatus !== 'duplicate_skipped');
+        const anyWaitingApproval = executedEntries.some((e) => e.executionStatus === 'blocked_approval');
+        const anyFailed = executedEntries.some((e) => e.executionStatus === 'failed');
+        const anySucceeded = executedEntries.some((e) => e.executionStatus === 'success');
+        const anyUnverified = executedEntries.some(
+          (e) => e.executionStatus === 'success' && e.verificationStatus !== 'verified'
+        );
+
+        let taskOutcome: TaskOutcome = 'COMPLETE';
+        let overallSuccess = true;
+        let executiveDecision: ExecutiveDecision = 'SYNTHESIZE_RESULTS';
+
+        if (anyWaitingApproval) {
+          taskOutcome = 'WAITING_FOR_APPROVAL';
+          overallSuccess = false;
+          executiveDecision = 'REQUEST_APPROVAL';
+        } else if (maxIterationsReached && !finalContent) {
+          taskOutcome = 'MAX_ITERATIONS_REACHED';
+          overallSuccess = false;
+          executiveDecision = 'HANDLE_FAILURE';
+        } else if (modelFailedAfterTools) {
+          taskOutcome = anySucceeded ? 'PARTIALLY_COMPLETE' : 'FAILED';
+          overallSuccess = false;
+          executiveDecision = 'HANDLE_FAILURE';
+        } else if (anyFailed && anySucceeded) {
+          taskOutcome = 'PARTIALLY_COMPLETE';
+          overallSuccess = false;
+          executiveDecision = 'HANDLE_FAILURE';
+        } else if (anyFailed) {
+          taskOutcome = 'FAILED';
+          overallSuccess = false;
+          executiveDecision = 'HANDLE_FAILURE';
+        } else if (anyUnverified) {
+          taskOutcome = 'VERIFICATION_FAILED';
+          overallSuccess = false;
+          executiveDecision = 'HANDLE_FAILURE';
+        }
+
+        const ledgerSummaryLines = executedEntries.map(
+          (e) => `- ${e.capabilityName}: ${e.executionStatus} (${e.verificationStatus})${e.error ? ` — ${e.error}` : ''}`
+        );
+
+        let finalText = finalContent;
+        if (!overallSuccess) {
+          if (taskOutcome === 'WAITING_FOR_APPROVAL') {
+            finalText = finalContent || lastToolResult?.message || 'Action requires explicit human approval before execution.';
+          } else if (taskOutcome === 'MAX_ITERATIONS_REACHED') {
+            finalText = `Stopped after reaching the maximum tool iteration limit (${MAX_TOOL_ITERATIONS}). Execution ledger:\n${ledgerSummaryLines.join('\n')}`;
+          } else if (taskOutcome === 'PARTIALLY_COMPLETE') {
+            finalText = `Task partially completed${modelFailureError ? ` (model follow-up failed: ${modelFailureError})` : ''}. Execution ledger:\n${ledgerSummaryLines.join('\n')}`;
+          } else if (taskOutcome === 'VERIFICATION_FAILED') {
+            finalText = `Tool execution completed but verification failed for one or more steps:\n${ledgerSummaryLines.join('\n')}`;
+          } else {
+            finalText = `Task failed${modelFailureError ? `: ${modelFailureError}` : ''}.\n${ledgerSummaryLines.join('\n')}`;
+          }
+        } else if (!finalText) {
+          finalText = lastToolResult?.message || 'Done.';
+        }
+
         const voiceSummary =
           channel === 'voice' || depthSelection.depth === 'DETAILED'
             ? adaptiveEngine.buildVoiceSummary(finalText, depthSelection.maxVoiceSentences)
@@ -795,9 +933,9 @@ export class AssistantBrain {
           intentId,
           effectiveText,
           finalText,
-          lastToolResult.success,
+          overallSuccess,
           'claw',
-          RiskLevel.LOW,
+          anyWaitingApproval ? RiskLevel.HIGH : RiskLevel.LOW,
           startTime,
           sessionId,
           actorId,
@@ -806,7 +944,9 @@ export class AssistantBrain {
         return {
           ...result,
           toolResult: lastToolResult,
-          executiveDecision: 'SYNTHESIZE_RESULTS',
+          executionLedger,
+          taskOutcome,
+          executiveDecision,
           assistantRequest: understood,
           personalityMeta: { ...personalityMeta, voiceSummary },
           timingsMs: {
@@ -838,6 +978,7 @@ export class AssistantBrain {
         );
         return {
           ...res,
+          taskOutcome: 'COMPLETE',
           executiveDecision: 'ANSWER_DIRECTLY',
           assistantRequest: understood,
           personalityMeta: { ...personalityMeta, voiceSummary },
@@ -851,8 +992,8 @@ export class AssistantBrain {
       }
     }
 
-    // 10. Graceful offline/unconfigured guidance tailored to active personality
-    if (!aiStatus.configured || !aiStatus.reachable) {
+    // 10. Graceful offline/unconfigured/unavailable-model guidance tailored to active personality
+    if (!aiStatus.configured || !aiStatus.reachable || !aiStatus.modelAvailable) {
       const honestMsg = adaptiveEngine.buildOfflineFallback({
         rawInput: effectiveText,
         userName: profile.userName,
