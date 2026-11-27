@@ -404,24 +404,24 @@ export class AssistantBrain {
     const discovery =
       understood.intent === 'knowledge_question'
         ? {
-            request: effectiveText,
-            normalizedIntent: effectiveText,
-            requiresTools: false,
-            isPureGreeting: false,
-            hasCompoundGreeting: false,
-            matched: [],
-            unavailable: [],
-            missingInputs: [],
-            ambiguous: false,
-            usedLlm: false,
-          }
+          request: effectiveText,
+          normalizedIntent: effectiveText,
+          requiresTools: false,
+          isPureGreeting: false,
+          hasCompoundGreeting: false,
+          matched: [],
+          unavailable: [],
+          missingInputs: [],
+          ambiguous: false,
+          usedLlm: false,
+        }
         : await getCapabilityDiscoveryEngine().discover({
-            request: effectiveText,
-            conversationId: sessionId,
-            conversationHistory: boundedCtx.recentMessages.map((m) => ({ role: m.role, content: m.content })),
-            timezone: profile.timezone,
-            useLlmFallback: false,
-          });
+          request: effectiveText,
+          conversationId: sessionId,
+          conversationHistory: boundedCtx.recentMessages.map((m) => ({ role: m.role, content: m.content })),
+          timezone: profile.timezone,
+          useLlmFallback: false,
+        });
 
     if (discovery.clarificationNeeded && discovery.matched.length <= 1) {
       await clarificationEngine.setPending({
