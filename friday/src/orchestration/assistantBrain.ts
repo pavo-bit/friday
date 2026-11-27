@@ -85,14 +85,31 @@ export class AssistantBrain {
       store.logConversation('user', effectiveText, undefined, sessionId);
     }
 
-    // 0. Clarification resumption (clarification NEVER grants approval/permission)
+    // 0. Persistent Clarification resumption (clarification NEVER grants approval/permission)
     const clarificationEngine = getClarificationEngine();
-    const pendingClarification = clarificationEngine.consumeAndMerge(
+    const pendingClarification = await clarificationEngine.consumeAndMerge(
       actorId,
       conversationId,
       effectiveText
     );
     if (pendingClarification) {
+      if (/^(cancel|never\s*mind|stop)\b/i.test(effectiveText)) {
+        const res = await this.finish(
+          intentId,
+          effectiveText,
+          `Okay ${profile.userName}, I've cancelled that pending request.`,
+          true,
+          'internal',
+          RiskLevel.LOW,
+          startTime,
+          sessionId
+        );
+        return {
+          ...res,
+          executiveDecision: 'ANSWER_DIRECTLY',
+          timingsMs: { understanding: 0, context: 0, planning: 0, total: Date.now() - startTime },
+        };
+      }
       effectiveText = pendingClarification.mergedRequest;
     }
 
@@ -109,10 +126,12 @@ export class AssistantBrain {
     // 2. Underspecified / ambiguous request -> ask one concise clarification question
     if (understood.missingInformation.length > 0 && !pendingClarification) {
       const question = `Could you clarify the ${understood.missingInformation.join(' and ')} before I proceed, ${profile.userName}?`;
-      clarificationEngine.setPending({
+      await clarificationEngine.setPending({
         actorId,
         conversationId,
+        originalRequestId: understood.requestId,
         originalRequest: effectiveText,
+        structuredRequest: understood,
         missingFields: understood.missingInformation,
         question,
       });
@@ -281,10 +300,12 @@ export class AssistantBrain {
     });
 
     if (discovery.clarificationNeeded && discovery.matched.length <= 1) {
-      clarificationEngine.setPending({
+      await clarificationEngine.setPending({
         actorId,
         conversationId,
+        originalRequestId: understood.requestId,
         originalRequest: effectiveText,
+        structuredRequest: understood,
         missingFields: discovery.missingInputs.flatMap((m) => m.fields),
         question: discovery.clarificationNeeded,
       });

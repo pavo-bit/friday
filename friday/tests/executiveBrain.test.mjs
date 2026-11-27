@@ -87,19 +87,19 @@ describe('Phase 10: Executive Brain, Context, Clarification & Result Synthesis',
     assert.ok(res1.clarificationNeeded);
     assert.equal(res1.success, false);
 
-    const pending = getClarificationEngine().getPending('user-clarify', 'conv-clarify');
+    const pending = await getClarificationEngine().getPending('user-clarify', 'conv-clarify');
     assert.ok(pending !== null);
     assert.ok(pending.missingFields.includes('recipient'));
 
     // Answering clarification merges request without granting approval
-    const merged = getClarificationEngine().consumeAndMerge(
+    const merged = await getClarificationEngine().consumeAndMerge(
       'user-clarify',
       'conv-clarify',
       'Rahul on WhatsApp'
     );
     assert.ok(merged?.mergedRequest.includes('Send him the report.'));
     assert.ok(merged?.mergedRequest.includes('Rahul on WhatsApp'));
-    assert.equal(getClarificationEngine().getPending('user-clarify', 'conv-clarify'), null);
+    assert.equal(await getClarificationEngine().getPending('user-clarify', 'conv-clarify'), null);
   });
 
   it('Scenario F: ContextResolution resolves single waiting task and asks clarification when ambiguous', () => {

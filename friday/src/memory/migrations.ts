@@ -554,6 +554,32 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_trd_bt_owner ON trading_backtest_runs(owner_id, created_at);
     `,
   },
+  {
+    version: 8,
+    name: 'persistent_clarifications',
+    sql: `
+      CREATE TABLE IF NOT EXISTS pending_clarifications (
+        clarification_id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        original_request_id TEXT NOT NULL,
+        original_input TEXT NOT NULL,
+        request_json TEXT NOT NULL,
+        missing_fields_json TEXT NOT NULL DEFAULT '[]',
+        collected_info_json TEXT NOT NULL DEFAULT '[]',
+        question TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'RESUMED', 'EXPIRED', 'CANCELLED')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_clarif_actor_conv
+        ON pending_clarifications(actor_id, conversation_id, status);
+      CREATE INDEX IF NOT EXISTS idx_clarif_expires
+        ON pending_clarifications(status, expires_at);
+    `,
+  },
 ];
 
 /**

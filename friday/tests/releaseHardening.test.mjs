@@ -46,7 +46,7 @@ describe('Phase 9: Hardening, Migration Upgrade, Backup/Restore & Backtest Edge 
     assert.equal(row.value, 'Boss');
 
     const latestVer = db.prepare(`SELECT MAX(version) AS v FROM schema_migrations`).get();
-    assert.equal(latestVer.v, 7);
+    assert.equal(latestVer.v, MIGRATIONS[MIGRATIONS.length - 1].version);
 
     const tables = db
       .prepare(`SELECT name FROM sqlite_master WHERE type = 'table'`)
