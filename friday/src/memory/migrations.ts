@@ -176,6 +176,74 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_audit_logs_created ON audit_logs(created_at);
     `,
   },
+  {
+    version: 3,
+    name: 'background_orchestrator_tasks',
+    sql: `
+      CREATE TABLE IF NOT EXISTS background_tasks (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL DEFAULT 'local',
+        conversation_id TEXT,
+        idempotency_key TEXT UNIQUE,
+        status TEXT NOT NULL CHECK(status IN (
+          'RECEIVED','QUEUED','RUNNING','WAITING_FOR_APPROVAL',
+          'VERIFYING','COMPLETED','FAILED','CANCELLED','TIMED_OUT','INTERRUPTED'
+        )),
+        task_class TEXT NOT NULL DEFAULT 'lightweight' CHECK(task_class IN ('lightweight','ai_intensive','llm_generation')),
+        priority INTEGER NOT NULL DEFAULT 5,
+        original_request TEXT NOT NULL,
+        execution_plan_json TEXT NOT NULL,
+        progress INTEGER NOT NULL DEFAULT 0,
+        result_summary TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        timeout_ms INTEGER NOT NULL DEFAULT 60000,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        started_at TEXT,
+        completed_at TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_bg_tasks_status ON background_tasks(status);
+      CREATE INDEX IF NOT EXISTS idx_bg_tasks_owner ON background_tasks(owner_id);
+      CREATE INDEX IF NOT EXISTS idx_bg_tasks_created ON background_tasks(created_at);
+
+      CREATE TABLE IF NOT EXISTS task_steps (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES background_tasks(id) ON DELETE CASCADE,
+        step_id TEXT NOT NULL,
+        capability_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN (
+          'PENDING','QUEUED','RUNNING','WAITING_FOR_APPROVAL',
+          'COMPLETED','FAILED','CANCELLED','TIMED_OUT','INTERRUPTED','SKIPPED'
+        )),
+        arguments_json TEXT NOT NULL DEFAULT '{}',
+        dependencies_json TEXT NOT NULL DEFAULT '[]',
+        execution_order INTEGER NOT NULL DEFAULT 0,
+        idempotent INTEGER NOT NULL DEFAULT 0,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        max_attempts INTEGER NOT NULL DEFAULT 1,
+        result_json TEXT,
+        error_code TEXT,
+        error_message TEXT,
+        started_at TEXT,
+        completed_at TEXT,
+        duration_ms INTEGER
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_steps_task ON task_steps(task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_steps_status ON task_steps(status);
+
+      CREATE TABLE IF NOT EXISTS task_events (
+        id TEXT PRIMARY KEY,
+        task_id TEXT NOT NULL REFERENCES background_tasks(id) ON DELETE CASCADE,
+        step_id TEXT,
+        event_type TEXT NOT NULL,
+        payload_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
+      CREATE INDEX IF NOT EXISTS idx_task_events_created ON task_events(created_at);
+    `,
+  },
 ];
 
 /**

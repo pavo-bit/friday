@@ -11,6 +11,7 @@ import { getOllamaClient, OllamaChatMessage } from './ollamaClient';
 import { getToolRegistry, ToolExecutionResult } from './toolRegistry';
 import { getCapabilityDiscoveryEngine } from './capabilityDiscovery';
 import { getToolPlanner, ExecutionPlan } from './toolPlanner';
+import { getBackgroundOrchestrator } from './backgroundOrchestrator';
 import { getMonitoringEngine } from '../services/monitoringEngine';
 import { getSchedulerService } from '../services/schedulerService';
 import { getIntentParser } from '../intelligence/intentParser';
@@ -30,7 +31,7 @@ export class AssistantBrain {
     text: string,
     sessionId?: string,
     approvedHighRisk = false
-  ): Promise<TaskResult & { toolResult?: ToolExecutionResult; plan?: ExecutionPlan }> {
+  ): Promise<TaskResult & { toolResult?: ToolExecutionResult; plan?: ExecutionPlan; backgroundTaskId?: string }> {
     const startTime = Date.now();
     const intentId = uuidv4();
     const store = await getMemoryStore();
@@ -135,43 +136,23 @@ export class AssistantBrain {
         return { ...res, plan };
       }
 
-      const outputs: string[] = [];
-      let allOk = true;
-      let lastToolResult: ToolExecutionResult | undefined;
+      const submitted = await getBackgroundOrchestrator().submitPlan(plan, {
+        ownerId: 'local',
+        approvedHighRisk,
+      });
 
-      for (const group of plan.parallelGroups) {
-        const groupSteps = group
-          .map((sid) => plan.steps.find((s) => s.stepId === sid))
-          .filter((s): s is NonNullable<typeof s> => Boolean(s));
-
-        const results = await Promise.all(
-          groupSteps.map((step) =>
-            registry.execute(step.capabilityId, step.arguments, {
-              actor: 'user',
-              approvedHighRisk,
-              timezone: profile.timezone,
-            })
-          )
-        );
-
-        for (const r of results) {
-          lastToolResult = r;
-          if (!r.success) allOk = false;
-          outputs.push(r.message);
-        }
-      }
-
+      const acceptedMsg = `I've started that in the background, ${profile.userName} (Task ${submitted.taskId}, ${plan.steps.length} steps). I'll notify you as each step completes.`;
       const res = await this.finish(
         intentId,
         trimmed,
-        outputs.join('\n'),
-        allOk,
+        acceptedMsg,
+        true,
         'internal',
         RiskLevel.LOW,
         startTime,
         sessionId
       );
-      return { ...res, toolResult: lastToolResult, plan };
+      return { ...res, plan, backgroundTaskId: submitted.taskId };
     }
 
     // 2. Deterministic Natural-Language Tool Matching (reliable even offline)

@@ -17,6 +17,7 @@ import { getClawBridge } from './orchestration/clawBridge';
 import { getMemoryStore } from './memory/store';
 import { getMonitoringEngine } from './services/monitoringEngine';
 import { getSchedulerService } from './services/schedulerService';
+import { getBackgroundOrchestrator } from './orchestration/backgroundOrchestrator';
 
 const log = createLayerLogger('Core');
 
@@ -83,8 +84,9 @@ async function boot(): Promise<void> {
     log.warn('   FRIDAY will run in limited mode (no Claw-powered tasks)');
   }
 
-  // Step 4: Recover persistent watchers & start scheduler
+  // Step 4: Recover persistent watchers, background tasks & start scheduler
   await getMonitoringEngine().recoverOnBoot();
+  await getBackgroundOrchestrator().recoverOnBoot();
   await getSchedulerService().start();
 
   // Step 5: Start the server

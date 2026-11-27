@@ -15,6 +15,16 @@ import { createLayerLogger } from './logger';
 
 const log = createLayerLogger('EventBus');
 
+export interface TaskLifecycleEventPayload {
+  taskId: string;
+  conversationId?: string;
+  stepId?: string;
+  status: string;
+  progress: number;
+  timestamp: string;
+  summary: string;
+}
+
 /** All events that flow through the FRIDAY system */
 export interface FridayEvents {
   // Voice Layer events
@@ -31,6 +41,19 @@ export interface FridayEvents {
   'task:progress': (intentId: string, message: string) => void;
   'task:completed': (result: TaskResult) => void;
   'task:failed': (result: TaskResult) => void;
+  'task.created': (payload: TaskLifecycleEventPayload) => void;
+  'task.queued': (payload: TaskLifecycleEventPayload) => void;
+  'task.started': (payload: TaskLifecycleEventPayload) => void;
+  'task.progress': (payload: TaskLifecycleEventPayload) => void;
+  'task.step.started': (payload: TaskLifecycleEventPayload) => void;
+  'task.step.completed': (payload: TaskLifecycleEventPayload) => void;
+  'task.step.failed': (payload: TaskLifecycleEventPayload) => void;
+  'task.waiting_approval': (payload: TaskLifecycleEventPayload) => void;
+  'task.cancelled': (payload: TaskLifecycleEventPayload) => void;
+  'task.completed': (payload: TaskLifecycleEventPayload) => void;
+  'task.failed': (payload: TaskLifecycleEventPayload) => void;
+  'task.timed_out': (payload: TaskLifecycleEventPayload) => void;
+  'task.interrupted': (payload: TaskLifecycleEventPayload) => void;
 
   // Safety events
   'safety:approval_needed': (request: ApprovalRequest) => void;

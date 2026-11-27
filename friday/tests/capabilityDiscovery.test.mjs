@@ -107,10 +107,10 @@ test('AssistantBrain regression: greeting, multi-tool execution, and missing-inp
   const multiRes = await brain.process('Check my laptop health and current time.');
   assert.equal(multiRes.success, true);
   assert.ok(multiRes.plan);
+  assert.ok(multiRes.backgroundTaskId);
   assert.equal(multiRes.plan.steps.length, 2);
   assert.equal(multiRes.plan.parallelGroups.length, 1);
-  assert.match(multiRes.output, /Ollama:/i);
-  assert.match(multiRes.output, /currently/i);
+  assert.match(multiRes.output, /started that in the background/i);
 
   const clarifyRes = await brain.process('Remind me to pay my bill.');
   assert.equal(clarifyRes.success, false);

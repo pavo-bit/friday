@@ -163,6 +163,7 @@ export enum WsMessageType {
   WATCHER_UPDATED = 'watcher:updated',
   NOTIFICATION_NEW = 'notification:new',
   REMINDER_TRIGGERED = 'reminder:triggered',
+  TASK_EVENT = 'task:event',
   ERROR = 'error',
 }
 

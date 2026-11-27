@@ -16,6 +16,7 @@ import { fridayRoutes } from './routes/friday';
 import { memoryRoutes } from './routes/memory';
 import { healthRoutes } from './routes/health';
 import { assistantRoutes } from './routes/assistant';
+import { taskRoutes } from './routes/tasks';
 import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
@@ -123,6 +124,7 @@ export class FridayServer {
   private setupRoutes(): void {
     this.app.use('/friday', fridayRoutes);
     this.app.use('/friday/memory', memoryRoutes);
+    this.app.use('/friday/tasks', taskRoutes);
     this.app.use('/friday', healthRoutes);
     this.app.use('/friday', assistantRoutes);
 
@@ -231,9 +233,17 @@ export class FridayServer {
     }
   }
 
+  /** Return the actual bound listening port */
+  getPort(): number {
+    const addr = this.server?.address();
+    if (addr && typeof addr === 'object') return addr.port;
+    return getConfig().port;
+  }
+
   /** Start the server */
-  async start(): Promise<void> {
+  async start(portOverride?: number): Promise<void> {
     const config = getConfig();
+    const listenPort = portOverride !== undefined ? portOverride : config.port;
 
     // Validate configuration
     const errors = validateConfig(config);
@@ -247,8 +257,9 @@ export class FridayServer {
     this.setupWebSocket();
 
     return new Promise((resolve) => {
-      this.server!.listen(config.port, config.host, () => {
-        log.info(`🚀 FRIDAY is live at http://${config.host}:${config.port}`);
+      this.server!.listen(listenPort, config.host, () => {
+        const boundPort = this.getPort();
+        log.info(`🚀 FRIDAY is live at http://${config.host}:${boundPort}`);
         log.info(`   Dashboard: http://${config.host}:${config.port}`);
         log.info(`   API: http://${config.host}:${config.port}/friday/run`);
         log.info(`   WebSocket: ws://${config.host}:${config.port}/friday/ws`);
