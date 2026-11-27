@@ -573,6 +573,61 @@ Loading voice health diagnostics...
           </div>
         </div>
 
+        <div class="two-col" style="margin-top: 16px;">
+          <div class="card">
+            <div class="card-header">
+              <h2>Personal Identity Profile</h2>
+            </div>
+            <form id="personalIdentityForm" class="stack-form">
+              <label>Preferred Address <input type="text" id="piPreferredAddress" placeholder="Boss"></label>
+              <label>Explanation Style
+                <select id="piExplanationStyle">
+                  <option value="progressive">Progressive</option>
+                  <option value="direct">Direct</option>
+                  <option value="socratic">Socratic</option>
+                  <option value="example_first">Example First</option>
+                </select>
+              </label>
+              <label>Goals (comma-separated) <input type="text" id="piGoals" placeholder="Build FRIDAY, Ship clean code"></label>
+              <label>Working Context <input type="text" id="piWorkingContext" placeholder="Local-first Windows + Android assistant"></label>
+              <label class="checkbox-label"><input type="checkbox" id="piAllowLearning" checked> Allow continuous learning from approved inputs</label>
+              <label class="checkbox-label"><input type="checkbox" id="piAllowProjectTracking" checked> Allow cross-project context tracking</label>
+              <button type="submit" class="btn-primary">Save Identity Profile</button>
+            </form>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Cross-Project Contexts</h2>
+              <span class="badge" id="activeProjectBadge">None</span>
+            </div>
+            <form id="projectContextForm" class="form-row" style="margin-bottom:10px;">
+              <input type="text" id="projNameInput" placeholder="Project name" required>
+              <input type="text" id="projStackInput" placeholder="Tech stack (comma-sep)">
+              <input type="text" id="projProgressInput" placeholder="Progress summary">
+              <button type="submit" class="btn-primary">Save / Activate</button>
+            </form>
+            <div id="projectsList" class="list-container"></div>
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top: 16px;">
+          <div class="card">
+            <div class="card-header">
+              <h2>Continuous Learning Activity</h2>
+              <button class="btn-sm" id="refreshLearningBtn" type="button">Refresh</button>
+            </div>
+            <div id="learningRecordsList" class="list-container"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Learned Procedures (Approval-Governed)</h2>
+            </div>
+            <div id="learnedProceduresList" class="list-container"></div>
+          </div>
+        </div>
+
         <div class="card">
           <div class="card-header"><h2>Security & Tool Audit Log</h2></div>
           <div id="auditLogsList" class="list-container"></div>

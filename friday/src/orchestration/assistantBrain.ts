@@ -10,6 +10,9 @@ import { getPersonalityEngine } from '../intelligence/personality';
 import { getAdaptivePersonalityEngine } from '../personality/personalityEngine';
 import { selectResponseDepth } from '../personality/responseDepth';
 import { InteractionChannel, PersonalityMetadata } from '../personality/personalityTypes';
+import { getPersonalIdentityService } from '../identity/identityService';
+import { getProjectContextService } from '../identity/projectContextService';
+import { getContinuousLearningEngine } from '../learning/learningEngine';
 import { getOllamaClient, OllamaChatMessage } from './ollamaClient';
 import { getToolRegistry, ToolExecutionResult } from './toolRegistry';
 import { getCapabilityDiscoveryEngine } from './capabilityDiscovery';
@@ -269,6 +272,48 @@ export class AssistantBrain {
     }
     const identitySettings = store.getDigitalIdentitySettings(actorId);
     const convState = store.getConversationContextState(actorId, conversationId);
+    const personalIdentity = await getPersonalIdentityService().getProfile(actorId);
+    let activeProject = await getProjectContextService().getActiveProject(actorId);
+
+    // Handle explicit project context switch (Phase 13.8)
+    if (understood.projectSwitchTarget) {
+      const switchRes = await getProjectContextService().switchProject(actorId, understood.projectSwitchTarget);
+      if (switchRes.switched && switchRes.project) {
+        activeProject = switchRes.project;
+        const msg = `Switched active project context to "${switchRes.project.projectName}"${switchRes.project.techStack.length > 0 ? ` (${switchRes.project.techStack.join(', ')})` : ''}, ${personalIdentity.preferredAddress}.`;
+        const res = await this.finish(
+          intentId,
+          effectiveText,
+          msg,
+          true,
+          'internal',
+          RiskLevel.LOW,
+          startTime,
+          sessionId,
+          actorId,
+          channel
+        );
+        return {
+          ...res,
+          executiveDecision: 'ANSWER_DIRECTLY',
+          assistantRequest: understood,
+          timingsMs: { understanding: understandingMs, context: contextMs, planning: 0, total: Date.now() - startTime },
+        };
+      }
+    }
+
+    // Continuous learning: record explicit user corrections / preferences when permitted
+    if (identitySettings.memoryAutoLearn && personalIdentity.privacy.allowLearning) {
+      const correctionMatch = effectiveText.match(/^(?:actually,?\s+|correction:\s*|remember\s+(?:that\s+)?)(.+)$/i);
+      if (correctionMatch && correctionMatch[1].trim().length >= 8) {
+        await getContinuousLearningEngine().recordCorrection({
+          actorId,
+          subject: activeProject ? `${activeProject.projectName} user note` : 'user preference / correction',
+          correction: correctionMatch[1].trim(),
+          projectName: activeProject?.projectName,
+        });
+      }
+    }
 
     const personalitySelection = adaptiveEngine.selectPersonality({
       rawInput: effectiveText,
@@ -608,6 +653,8 @@ export class AssistantBrain {
     if (ollamaStatus.reachable && ollamaStatus.modelAvailable) {
       const systemPrompt = adaptiveEngine.buildAdaptiveSystemPrompt({
         legacyProfile: profile,
+        preferredAddress: personalIdentity.preferredAddress,
+        activeProject,
         selection: personalitySelection,
         depth: depthSelection,
         channel,

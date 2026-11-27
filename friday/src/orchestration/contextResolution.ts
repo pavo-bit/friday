@@ -11,6 +11,8 @@ import { BoundApprovalRecord } from './approvalStore';
 import { getDisplayManager } from '../presentation/displayManager';
 import { PresentationContract } from '../presentation/presentationTypes';
 import { AssistantRequest } from './requestUnderstanding';
+import { getProjectContextService } from '../identity/projectContextService';
+import { getContinuousLearningEngine } from '../learning/learningEngine';
 
 export interface ContextLimits {
   maxHistory: number;
@@ -48,6 +50,7 @@ export interface BoundedContextPackage {
   };
   activeTopic: string;
   isReturningTopic: boolean;
+  activeProjectName?: string;
   injectionFilteredCount: number;
 }
 
@@ -133,6 +136,31 @@ export class ContextResolutionEngine {
       knowledge: sanitizeList(knowRows),
     };
 
+    const activeProject = await getProjectContextService().getActiveProject(req.actorId);
+    if (activeProject) {
+      const projLine = `${activeProject.projectName} (${activeProject.techStack.join(', ') || 'general'}): ${activeProject.progressSummary || activeProject.architectureSummary || 'active'}`;
+      if (!categorizedMemories.projects.includes(projLine)) {
+        categorizedMemories.projects.unshift(projLine);
+      }
+    }
+
+    const learnedRecords = await getContinuousLearningEngine().retrieve({
+      actorId: req.actorId,
+      projectName: activeProject?.projectName,
+      query: req.normalizedInput,
+      limit: 4,
+    });
+    for (const rec of learnedRecords) {
+      const s = sanitizeRetrievedText(`${rec.subject}: ${rec.content}`);
+      if (s.flagged) {
+        injectionFilteredCount++;
+        continue;
+      }
+      if (!categorizedMemories.knowledge.includes(s.safe)) {
+        categorizedMemories.knowledge.push(s.safe);
+      }
+    }
+
     const convState = store.getConversationContextState(req.actorId, req.conversationId);
     const activeTopic = convState.activeTopic || '';
     const isReturningTopic =
@@ -193,6 +221,7 @@ export class ContextResolutionEngine {
       categorizedMemories,
       activeTopic,
       isReturningTopic,
+      activeProjectName: activeProject?.projectName,
       injectionFilteredCount,
     };
   }

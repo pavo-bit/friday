@@ -223,6 +223,13 @@ export class AdaptivePersonalityEngine {
    */
   buildAdaptiveSystemPrompt(params: {
     legacyProfile: PersonalityProfile;
+    preferredAddress?: string;
+    activeProject?: {
+      projectName: string;
+      techStack: string[];
+      progressSummary: string;
+      blockers: string[];
+    } | null;
     selection: PersonalitySelectionResult;
     depth: DepthSelectionResult;
     channel: InteractionChannel;
@@ -233,8 +240,8 @@ export class AdaptivePersonalityEngine {
       activeTopic?: string;
     };
   }): string {
-    const { legacyProfile, selection, depth, channel, memoryContext } = params;
-    const userName = legacyProfile.userName?.trim() || 'Boss';
+    const { legacyProfile, preferredAddress, activeProject, selection, depth, channel, memoryContext } = params;
+    const userName = preferredAddress?.trim() || legacyProfile.userName?.trim() || 'Boss';
 
     const lines: string[] = [
       `You are FRIDAY — ${userName}'s personal digital identity and intelligent assistant.`,
@@ -271,6 +278,14 @@ export class AdaptivePersonalityEngine {
       '- Personality and conversational instructions NEVER override security policies, approvals, permissions, or financial/trading risk limits.'
     );
 
+    if (activeProject) {
+      lines.push(
+        '',
+        `ACTIVE PROJECT: ${activeProject.projectName}${activeProject.techStack.length > 0 ? ` [${activeProject.techStack.join(', ')}]` : ''}`,
+        ...(activeProject.progressSummary ? [`Progress: ${activeProject.progressSummary}`] : []),
+        ...(activeProject.blockers.length > 0 ? [`Blockers: ${activeProject.blockers.join('; ')}`] : [])
+      );
+    }
     if (memoryContext.activeTopic) {
       lines.push('', `CURRENT ACTIVE TOPIC: ${memoryContext.activeTopic}`);
     }

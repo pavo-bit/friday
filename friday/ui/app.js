@@ -422,6 +422,167 @@
           )
           .join('')
       : '<div class="hint">No audit records yet.</div>';
+
+    await loadIdentityAndLearning();
+  }
+
+  async function loadIdentityAndLearning() {
+    try {
+      const [idBundle, projData, recData, procData] = await Promise.all([
+        api('/friday/identity'),
+        api('/friday/identity/projects'),
+        api('/friday/learning/records?limit=12'),
+        api('/friday/learning/procedures'),
+      ]);
+
+      const prof = idBundle.profile;
+      if (prof) {
+        const addrEl = document.getElementById('piPreferredAddress');
+        const styleEl = document.getElementById('piExplanationStyle');
+        const goalsEl = document.getElementById('piGoals');
+        const ctxEl = document.getElementById('piWorkingContext');
+        const learnEl = document.getElementById('piAllowLearning');
+        const projTrackEl = document.getElementById('piAllowProjectTracking');
+        if (addrEl) addrEl.value = prof.preferredAddress || 'Boss';
+        if (styleEl) styleEl.value = prof.explanationStyle || 'progressive';
+        if (goalsEl) goalsEl.value = Array.isArray(prof.goals) ? prof.goals.join(', ') : '';
+        if (ctxEl) ctxEl.value = prof.workingContext || '';
+        if (learnEl) learnEl.checked = Boolean(prof.privacy?.allowLearning);
+        if (projTrackEl) projTrackEl.checked = Boolean(prof.privacy?.allowProjectTracking);
+      }
+
+      const activeBadge = document.getElementById('activeProjectBadge');
+      if (activeBadge) {
+        activeBadge.textContent = projData.activeProject ? `Active: ${projData.activeProject.projectName}` : 'None';
+      }
+      const projList = document.getElementById('projectsList');
+      if (projList) {
+        const projects = projData.projects || [];
+        projList.innerHTML = projects.length
+          ? projects
+              .map(
+                (p) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-item-title">${p.projectName} ${p.isActive ? '<span class="pill healthy">ACTIVE</span>' : ''}</div>
+                  <div class="list-item-sub">${(p.techStack || []).join(', ') || 'No stack'} · ${p.progressSummary || 'No summary'}</div>
+                </div>
+                ${!p.isActive ? `<button class="btn-sm" onclick="window.__switchProject('${p.projectName.replace(/'/g, "\\'")}')">Switch</button>` : ''}
+              </div>`
+              )
+              .join('')
+          : '<div class="hint">No project contexts saved yet.</div>';
+      }
+
+      const recList = document.getElementById('learningRecordsList');
+      if (recList) {
+        const recs = recData.records || [];
+        recList.innerHTML = recs.length
+          ? recs
+              .map(
+                (r) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-item-title">[${r.learningKind}] ${r.subject} <span class="pill ${r.verified ? 'healthy' : 'active'}">${r.sourceQuality}</span></div>
+                  <div class="list-item-sub">${r.content}</div>
+                </div>
+              </div>`
+              )
+              .join('')
+          : '<div class="hint">No learning records yet.</div>';
+      }
+
+      const procList = document.getElementById('learnedProceduresList');
+      if (procList) {
+        const procs = procData.procedures || [];
+        procList.innerHTML = procs.length
+          ? procs
+              .map(
+                (p) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-item-title">${p.name} <span class="pill ${p.approvedByUser ? 'healthy' : 'warning'}">${p.approvedByUser ? 'APPROVED' : 'PENDING APPROVAL'}</span></div>
+                  <div class="list-item-sub">${p.description} (${(p.steps || []).length} steps)</div>
+                </div>
+                ${!p.approvedByUser ? `<button class="btn-sm" onclick="window.__approveProc('${p.id}')">Approve</button>` : ''}
+              </div>`
+              )
+              .join('')
+          : '<div class="hint">No proposed procedures yet.</div>';
+      }
+    } catch {
+      // Ignore if identity/learning endpoints are not yet ready
+    }
+  }
+
+  window.__switchProject = async (projectName) => {
+    await api('/friday/identity/projects/switch', {
+      method: 'POST',
+      body: JSON.stringify({ projectName }),
+    });
+    loadIdentityAndLearning();
+  };
+
+  window.__approveProc = async (id) => {
+    await api(`/friday/learning/procedures/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ approvedByHuman: true }),
+    });
+    loadIdentityAndLearning();
+  };
+
+  const piForm = document.getElementById('personalIdentityForm');
+  if (piForm) {
+    piForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const goals = document
+        .getElementById('piGoals')
+        .value.split(',')
+        .map((g) => g.trim())
+        .filter(Boolean);
+      await api('/friday/identity', {
+        method: 'PUT',
+        body: JSON.stringify({
+          preferredAddress: document.getElementById('piPreferredAddress').value,
+          explanationStyle: document.getElementById('piExplanationStyle').value,
+          goals,
+          workingContext: document.getElementById('piWorkingContext').value,
+          privacy: {
+            allowLearning: document.getElementById('piAllowLearning').checked,
+            allowProjectTracking: document.getElementById('piAllowProjectTracking').checked,
+          },
+        }),
+      });
+      loadIdentityAndLearning();
+    });
+  }
+
+  const projForm = document.getElementById('projectContextForm');
+  if (projForm) {
+    projForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const stack = document
+        .getElementById('projStackInput')
+        .value.split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
+      await api('/friday/identity/projects', {
+        method: 'POST',
+        body: JSON.stringify({
+          projectName: document.getElementById('projNameInput').value,
+          techStack: stack,
+          progressSummary: document.getElementById('projProgressInput').value,
+          setActive: true,
+        }),
+      });
+      projForm.reset();
+      loadIdentityAndLearning();
+    });
+  }
+
+  const refreshLearnBtn = document.getElementById('refreshLearningBtn');
+  if (refreshLearnBtn) {
+    refreshLearnBtn.addEventListener('click', loadIdentityAndLearning);
   }
 
   window.__revokeDevice = async (id) => { await api(`/friday/auth/devices/${id}`, { method: 'DELETE' }); loadSettings(); };

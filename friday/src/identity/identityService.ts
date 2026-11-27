@@ -157,7 +157,7 @@ export class PersonalIdentityService {
     return {
       profile,
       connectedDevices: devices
-        .filter((d) => !d.ownerId || d.ownerId === actorId || actorId === 'local')
+        .filter((d) => actorId === 'local' || d.id === actorId)
         .map((d) => ({
           id: d.id,
           name: d.name,

@@ -32,6 +32,7 @@ export interface AssistantRequest {
   explicitPersonalityOverride?: PersonalityMode;
   explicitDepthOverride?: ResponseDepthMode;
   persistOverride?: boolean;
+  projectSwitchTarget?: string;
   subIntents: string[];
   entities: {
     symbols: string[];
@@ -192,6 +193,10 @@ export class RequestUnderstandingEngine {
     }
 
     const complexity = this.assessComplexity(normalizedInput, conversationalCategory);
+    const switchMatch = normalizedInput.match(
+      /(?:switch\s+(?:project\s+)?to|focus\s+on(?:\s+my)?|set\s+active\s+project\s+to)\s+(?:the\s+|my\s+)?["']?([a-zA-Z0-9_-]{2,40})["']?(?:\s+project)?/i
+    );
+    const projectSwitchTarget = switchMatch ? switchMatch[1].trim() : undefined;
 
     return {
       requestId: uuidv4(),
@@ -205,6 +210,7 @@ export class RequestUnderstandingEngine {
       explicitPersonalityOverride,
       explicitDepthOverride,
       persistOverride: explicitPersonalityOverride || explicitDepthOverride ? persistOverride : undefined,
+      projectSwitchTarget,
       subIntents,
       entities: { symbols, urls, timeReferences, amounts },
       constraints,
