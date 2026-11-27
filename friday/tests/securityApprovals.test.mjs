@@ -61,7 +61,11 @@ describe('Phase 4: Persistent Security, Bound Approvals & WebSocket Auth', () =>
     await server?.stop();
     const store = await getMemoryStore();
     await store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      // Ignore Windows file-lock cleanup race in temp dir
+    }
   });
 
   it('Migration v4 created capability_approvals table and device revocation/expiry columns', async () => {

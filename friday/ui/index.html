@@ -22,6 +22,7 @@
 
       <nav class="nav">
         <button class="nav-btn active" data-tab="command">Command Center</button>
+        <button class="nav-btn" data-tab="finance">Financial Intelligence</button>
         <button class="nav-btn" data-tab="monitoring">Monitoring <span class="badge" id="navWatcherCount">0</span></button>
         <button class="nav-btn" data-tab="reminders">Reminders <span class="badge" id="navReminderCount">0</span></button>
         <button class="nav-btn" data-tab="notifications">Notifications <span class="badge warn" id="navNotifCount">0</span></button>
@@ -123,6 +124,67 @@
             <div class="presentation-cards" id="presentationCards">
               <div class="hint">Verified result cards, metrics, tables, charts, and approvals will appear here.</div>
             </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: FINANCIAL INTELLIGENCE -->
+      <section class="tab-panel" id="tab-finance">
+        <div class="stats-grid" id="financeOverviewGrid">
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Net Worth (User Ledger)</div>
+            <div class="stat-value" id="finNetWorth">INR 0.00</div>
+            <div class="stat-sub">Accounts + Portfolio - Debts</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Monthly Net Cash Flow</div>
+            <div class="stat-value" id="finCashFlow">INR 0.00</div>
+            <div class="stat-sub" id="finCashFlowSub">In: 0.00 · Out: 0.00</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Portfolio Valuation</div>
+            <div class="stat-value" id="finPortfolioVal">INR 0.00</div>
+            <div class="stat-sub">User-entered / verified holdings</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Total Debt Remaining</div>
+            <div class="stat-value" id="finDebtVal">INR 0.00</div>
+            <div class="stat-sub">Active liabilities</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h2>Record Income or Expense</h2>
+          </div>
+          <form class="form-row" id="finTxForm">
+            <select id="finTxType">
+              <option value="expense">Expense</option>
+              <option value="income">Income</option>
+            </select>
+            <input type="text" id="finTxCategory" placeholder="Category (e.g. groceries, salary)" required>
+            <input type="number" step="0.01" min="0.01" id="finTxAmount" placeholder="Amount (INR)" required>
+            <input type="text" id="finTxDesc" placeholder="Description (optional)">
+            <button type="submit" class="btn-primary">Record</button>
+          </form>
+        </div>
+
+        <div class="two-col" id="financeDetailsGrid">
+          <div class="card">
+            <div class="card-header"><h2>Budgets & Utilization</h2></div>
+            <div class="list-container" id="finBudgetsList"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h2>Savings Goals</h2></div>
+            <div class="list-container" id="finGoalsList"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h2>Debt Overview</h2></div>
+            <div class="list-container" id="finDebtsList"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h2>Portfolio Allocation</h2></div>
+            <div class="list-container" id="finHoldingsList"></div>
           </div>
         </div>
       </section>

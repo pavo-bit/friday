@@ -301,6 +301,153 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_presentations_conv ON presentations(conversation_id);
     `,
   },
+  {
+    version: 6,
+    name: 'financial_intelligence_foundation',
+    sql: `
+      CREATE TABLE IF NOT EXISTS financial_profiles (
+        owner_id TEXT PRIMARY KEY,
+        default_currency TEXT NOT NULL DEFAULT 'INR',
+        monthly_income_target_minor INTEGER NOT NULL DEFAULT 0,
+        emergency_fund_months INTEGER NOT NULL DEFAULT 6,
+        risk_profile TEXT NOT NULL DEFAULT 'moderate',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS financial_accounts (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        account_type TEXT NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        balance_minor INTEGER NOT NULL DEFAULT 0,
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        source_name TEXT NOT NULL DEFAULT 'User Input',
+        observed_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_accounts_owner ON financial_accounts(owner_id);
+
+      CREATE TABLE IF NOT EXISTS financial_account_snapshots (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL REFERENCES financial_accounts(id) ON DELETE CASCADE,
+        owner_id TEXT NOT NULL,
+        balance_minor INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        source_classification TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_acc_snap_owner ON financial_account_snapshots(owner_id, account_id, recorded_at);
+
+      CREATE TABLE IF NOT EXISTS financial_transactions (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        account_id TEXT REFERENCES financial_accounts(id) ON DELETE SET NULL,
+        tx_type TEXT NOT NULL CHECK(tx_type IN ('income', 'expense')),
+        category TEXT NOT NULL,
+        amount_minor INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        description TEXT NOT NULL DEFAULT '',
+        occurred_at TEXT NOT NULL,
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        source_name TEXT NOT NULL DEFAULT 'User Input',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_tx_owner_date ON financial_transactions(owner_id, occurred_at);
+
+      CREATE TABLE IF NOT EXISTS financial_budgets (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        period TEXT NOT NULL,
+        limit_minor INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        source_name TEXT NOT NULL DEFAULT 'User Input',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(owner_id, category, period)
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_budgets_owner ON financial_budgets(owner_id, period);
+
+      CREATE TABLE IF NOT EXISTS financial_goals (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        target_minor INTEGER NOT NULL,
+        current_minor INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        target_date TEXT,
+        monthly_contribution_minor INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'active',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        source_name TEXT NOT NULL DEFAULT 'User Input',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_goals_owner ON financial_goals(owner_id);
+
+      CREATE TABLE IF NOT EXISTS financial_debts (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        lender TEXT NOT NULL DEFAULT '',
+        principal_minor INTEGER NOT NULL,
+        remaining_minor INTEGER NOT NULL,
+        apr_bps INTEGER NOT NULL DEFAULT 0,
+        min_payment_minor INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        status TEXT NOT NULL DEFAULT 'active',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        source_name TEXT NOT NULL DEFAULT 'User Input',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_debts_owner ON financial_debts(owner_id);
+
+      CREATE TABLE IF NOT EXISTS financial_holdings (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        asset_class TEXT NOT NULL,
+        quantity_milli INTEGER NOT NULL,
+        avg_cost_minor INTEGER NOT NULL DEFAULT 0,
+        current_value_minor INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        source_name TEXT NOT NULL DEFAULT 'User Input',
+        observed_at TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_holdings_owner ON financial_holdings(owner_id);
+
+      CREATE TABLE IF NOT EXISTS financial_portfolio_snapshots (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        total_value_minor INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        allocation_json TEXT NOT NULL DEFAULT '{}',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_port_snap_owner ON financial_portfolio_snapshots(owner_id, recorded_at);
+
+      CREATE TABLE IF NOT EXISTS financial_trading_capital_allocations (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        allocated_capital_minor INTEGER NOT NULL,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        confirmed_by_user INTEGER NOT NULL DEFAULT 0,
+        confirmation_note TEXT NOT NULL DEFAULT '',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_fin_trading_cap_owner ON financial_trading_capital_allocations(owner_id, created_at);
+    `,
+  },
 ];
 
 /**

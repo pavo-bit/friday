@@ -254,6 +254,81 @@ export class CapabilityDiscoveryEngine {
   ): Omit<DiscoveredCapability, 'available'> | null {
     const lower = clause.toLowerCase();
 
+    // Financial Intelligence deterministic discovery
+    if (/\b(cash\s*flow|how\s+much\s+did\s+i\s+spend|monthly\s+spending|income\s+and\s+expense)\b/i.test(lower)) {
+      const cap = this.registry.get('finance.cash_flow');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Cash flow / spending inquiry matched finance.cash_flow',
+          confidence: 0.94,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(budget|budget\s+utilization|over\s+budget)\b/i.test(lower)) {
+      const cap = this.registry.get('finance.budget_status');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Budget inquiry matched finance.budget_status',
+          confidence: 0.93,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(savings?\s*goal|save\s+for\s+my\s+goal|financial\s*goal)\b/i.test(lower)) {
+      const cap = this.registry.get('finance.goal_progress');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Savings goal inquiry matched finance.goal_progress',
+          confidence: 0.93,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(portfolio|asset\s+allocation|holdings|concentration\s+risk)\b/i.test(lower)) {
+      const cap = this.registry.get('finance.portfolio_analyze');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Portfolio inquiry matched finance.portfolio_analyze',
+          confidence: 0.93,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(repayment\s+scenario|debt\s+scenario|debt\s+repayment)\b/i.test(lower)) {
+      const cap = this.registry.get('finance.debt_scenario');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Debt scenario inquiry matched finance.debt_scenario',
+          confidence: 0.9,
+          suggestedArguments: {},
+          missingInputs: ['remaining', 'aprPct', 'paymentA', 'paymentB'],
+          clarificationQuestion: 'Please provide remaining balance, APR %, and the two monthly payment amounts to compare.',
+        };
+      }
+    }
+    if (/\b(financial\s+(report|overview|summary)|net\s+worth)\b/i.test(lower)) {
+      const cap = this.registry.get('finance.report');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Financial overview inquiry matched finance.report',
+          confidence: 0.92,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+
     // Time / Date
     if (/\b(what\s*(time|day|date)|current\s*(time|date)|time\s*right\s*now)\b/i.test(lower)) {
       const cap = this.registry.get('get_current_time');

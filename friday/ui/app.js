@@ -709,6 +709,124 @@
     loadMemories();
     loadSettings();
     loadTasksAndPresentations();
+    loadFinanceOverview();
+  }
+
+  // Financial Intelligence UI
+  async function loadFinanceOverview() {
+    const container = document.getElementById('financeOverviewGrid');
+    const details = document.getElementById('financeDetailsGrid');
+    if (!container || !details) return;
+    try {
+      const report = await api('/friday/finance/overview');
+      const cur = report.currency || 'INR';
+
+      const setText = (id, val) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = val;
+      };
+      setText('finNetWorth', `${cur} ${report.netWorthFormatted}`);
+      setText('finCashFlow', `${cur} ${report.cashFlow.netCashFlowFormatted}`);
+      setText('finCashFlowSub', `In: ${report.cashFlow.totalIncomeFormatted} · Out: ${report.cashFlow.totalExpenseFormatted}`);
+      setText('finPortfolioVal', `${cur} ${report.portfolio.totalValueFormatted}`);
+      setText('finDebtVal', `${cur} ${report.totalDebtRemainingFormatted}`);
+
+      const renderList = (elId, items, emptyMsg, fmt) => {
+        const el = document.getElementById(elId);
+        if (!el) return;
+        el.textContent = '';
+        if (!items || !items.length) {
+          const hint = document.createElement('div');
+          hint.className = 'hint';
+          hint.textContent = emptyMsg;
+          el.appendChild(hint);
+          return;
+        }
+        for (const item of items) {
+          const row = document.createElement('div');
+          row.className = 'list-item';
+          const left = document.createElement('div');
+          const title = document.createElement('div');
+          title.className = 'list-item-title';
+          title.textContent = fmt.title(item);
+          const sub = document.createElement('div');
+          sub.className = 'list-item-sub';
+          sub.textContent = fmt.sub(item);
+          left.appendChild(title);
+          left.appendChild(sub);
+          const badge = document.createElement('span');
+          badge.className = 'pill info';
+          badge.textContent = item.sourceClassification || 'USER_ENTERED';
+          row.appendChild(left);
+          row.appendChild(badge);
+          el.appendChild(row);
+        }
+      };
+
+      renderList(
+        'finBudgetsList',
+        report.budgets,
+        'No budgets set for this month. Add a category budget below to track utilization.',
+        {
+          title: (b) => `${b.category.toUpperCase()} (${b.utilizationPct}%)`,
+          sub: (b) => `${b.currency} ${b.spentFormatted} / ${b.limitFormatted}${b.overBudget ? ' · OVER BUDGET' : ''}`,
+        }
+      );
+
+      renderList(
+        'finGoalsList',
+        report.goals,
+        'No savings goals yet. Create a goal to track target progress.',
+        {
+          title: (g) => `${g.name} (${g.progressPct}%)`,
+          sub: (g) => `${g.currency} ${g.currentFormatted} / ${g.targetFormatted} · Est. ${g.estimatedMonthsToGoal ?? 'N/A'} mo`,
+        }
+      );
+
+      renderList(
+        'finDebtsList',
+        report.debts,
+        'No debts recorded. Add any loan or liability to project repayment.',
+        {
+          title: (d) => `${d.name} (${d.aprPct}% APR)`,
+          sub: (d) => `Remaining ${d.currency} ${d.remainingFormatted} · Min ${d.minPaymentFormatted}/mo`,
+        }
+      );
+
+      renderList(
+        'finHoldingsList',
+        report.portfolio.allocationByAssetClass.map((a) => ({
+          ...a,
+          sourceClassification: report.portfolio.hasUnverifiedOrStaleData ? 'ESTIMATED' : 'USER_ENTERED',
+        })),
+        'No portfolio holdings recorded. Add holdings to analyze asset allocation.',
+        {
+          title: (a) => `${a.assetClass.toUpperCase()} (${a.sharePct}%)`,
+          sub: (a) => `${cur} ${a.valueFormatted}`,
+        }
+      );
+    } catch {
+      // Ignore transient finance load errors
+    }
+  }
+
+  const finTxForm = document.getElementById('finTxForm');
+  if (finTxForm) {
+    finTxForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await api('/friday/finance/transactions', {
+        method: 'POST',
+        body: JSON.stringify({
+          txType: document.getElementById('finTxType').value,
+          category: document.getElementById('finTxCategory').value,
+          amount: document.getElementById('finTxAmount').value,
+          description: document.getElementById('finTxDesc').value,
+          sourceClassification: 'USER_ENTERED',
+        }),
+      });
+      finTxForm.reset();
+      loadFinanceOverview();
+    });
   }
 
   connectWs();

@@ -62,7 +62,11 @@ describe('Phase 5: Result Verifier, Presentation Contracts & JARVIS Display', ()
     await server?.stop();
     const store = await getMemoryStore();
     await store.close();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 50 });
+    } catch {
+      // Ignore Windows file-lock cleanup race in temp dir
+    }
   });
 
   it('Migration v5 created presentations table and indexes', async () => {

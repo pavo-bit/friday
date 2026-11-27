@@ -1228,6 +1228,10 @@ export class CapabilityRegistry {
         };
       },
     });
+
+    // Register Financial Intelligence capabilities (Phase 6)
+    const { registerFinanceCapabilities } = require('../finance/financeCapabilities');
+    registerFinanceCapabilities(this);
   }
 }
 
