@@ -9,6 +9,8 @@ import { getMemoryStore } from '../memory/store';
 import { getPersonalityEngine } from '../intelligence/personality';
 import { getOllamaClient, OllamaChatMessage } from './ollamaClient';
 import { getToolRegistry, ToolExecutionResult } from './toolRegistry';
+import { getCapabilityDiscoveryEngine } from './capabilityDiscovery';
+import { getToolPlanner, ExecutionPlan } from './toolPlanner';
 import { getMonitoringEngine } from '../services/monitoringEngine';
 import { getSchedulerService } from '../services/schedulerService';
 import { getIntentParser } from '../intelligence/intentParser';
@@ -24,7 +26,11 @@ export class AssistantBrain {
    * Context load -> Deterministic tool / NLU match OR Ollama tool-calling ->
    * Verified execution -> Personality formatting -> Memory logging.
    */
-  async process(text: string, sessionId?: string, approvedHighRisk = false): Promise<TaskResult & { toolResult?: ToolExecutionResult }> {
+  async process(
+    text: string,
+    sessionId?: string,
+    approvedHighRisk = false
+  ): Promise<TaskResult & { toolResult?: ToolExecutionResult; plan?: ExecutionPlan }> {
     const startTime = Date.now();
     const intentId = uuidv4();
     const store = await getMemoryStore();
@@ -88,6 +94,84 @@ export class AssistantBrain {
     if (/^(bye|goodbye|see\s*you|good\s*night)\b/i.test(trimmed) && trimmed.length < 40) {
       const output = personality.buildFarewell(profile, trimmed);
       return this.finish(intentId, trimmed, output, true, 'internal', RiskLevel.LOW, startTime, sessionId);
+    }
+
+    // 1.5 Structured Capability Discovery & Multi-Tool Planning (deterministic fast path)
+    const discovery = await getCapabilityDiscoveryEngine().discover({
+      request: trimmed,
+      conversationId: sessionId,
+      conversationHistory: store.getRecentConversations(6, sessionId),
+      timezone: profile.timezone,
+      useLlmFallback: false,
+    });
+
+    if (discovery.clarificationNeeded && discovery.matched.length <= 1) {
+      return this.finish(
+        intentId,
+        trimmed,
+        discovery.clarificationNeeded,
+        false,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+    }
+
+    if (discovery.matched.length > 1) {
+      const plan = await getToolPlanner().createPlan(discovery, { conversationId: sessionId });
+      if (!plan.valid) {
+        const errMsg = plan.clarificationNeeded || plan.validationErrors.join(' ');
+        const res = await this.finish(
+          intentId,
+          trimmed,
+          personality.formatFailure(errMsg),
+          false,
+          'internal',
+          RiskLevel.LOW,
+          startTime,
+          sessionId
+        );
+        return { ...res, plan };
+      }
+
+      const outputs: string[] = [];
+      let allOk = true;
+      let lastToolResult: ToolExecutionResult | undefined;
+
+      for (const group of plan.parallelGroups) {
+        const groupSteps = group
+          .map((sid) => plan.steps.find((s) => s.stepId === sid))
+          .filter((s): s is NonNullable<typeof s> => Boolean(s));
+
+        const results = await Promise.all(
+          groupSteps.map((step) =>
+            registry.execute(step.capabilityId, step.arguments, {
+              actor: 'user',
+              approvedHighRisk,
+              timezone: profile.timezone,
+            })
+          )
+        );
+
+        for (const r of results) {
+          lastToolResult = r;
+          if (!r.success) allOk = false;
+          outputs.push(r.message);
+        }
+      }
+
+      const res = await this.finish(
+        intentId,
+        trimmed,
+        outputs.join('\n'),
+        allOk,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return { ...res, toolResult: lastToolResult, plan };
     }
 
     // 2. Deterministic Natural-Language Tool Matching (reliable even offline)
