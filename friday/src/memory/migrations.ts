@@ -623,6 +623,75 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_conversations_actor_session ON conversations(actor_id, session_id);
     `,
   },
+  {
+    version: 10,
+    name: 'personal_identity_projects_and_learning',
+    sql: `
+      CREATE TABLE IF NOT EXISTS personal_identities (
+        actor_id TEXT PRIMARY KEY,
+        preferred_address TEXT NOT NULL DEFAULT 'Boss',
+        explanation_style TEXT NOT NULL DEFAULT 'progressive',
+        goals_json TEXT NOT NULL DEFAULT '[]',
+        approved_apps_json TEXT NOT NULL DEFAULT '[]',
+        privacy_json TEXT NOT NULL DEFAULT '{"allowLearning":true,"allowProjectTracking":true,"redactSensitive":true}',
+        working_context TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS project_contexts (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        project_name TEXT NOT NULL,
+        repo_path TEXT DEFAULT '',
+        tech_stack_json TEXT NOT NULL DEFAULT '[]',
+        architecture_summary TEXT DEFAULT '',
+        progress_summary TEXT DEFAULT '',
+        blockers_json TEXT NOT NULL DEFAULT '[]',
+        recent_decisions_json TEXT NOT NULL DEFAULT '[]',
+        docs_paths_json TEXT NOT NULL DEFAULT '[]',
+        is_active INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(actor_id, project_name)
+      );
+      CREATE INDEX IF NOT EXISTS idx_projects_actor_active ON project_contexts(actor_id, is_active);
+
+      CREATE TABLE IF NOT EXISTS learning_records (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        learning_kind TEXT NOT NULL CHECK(learning_kind IN ('memory', 'knowledge', 'preference', 'procedure', 'fine_tune_candidate')),
+        source_type TEXT NOT NULL,
+        source_ref TEXT NOT NULL DEFAULT '',
+        source_quality TEXT NOT NULL CHECK(source_quality IN ('VERIFIED_FACT', 'USER_STATEMENT', 'EXTERNAL_CLAIM', 'INFERENCE', 'UNVERIFIED', 'OUTDATED')),
+        subject TEXT NOT NULL,
+        content TEXT NOT NULL,
+        project_name TEXT DEFAULT '',
+        confidence REAL NOT NULL DEFAULT 0.7,
+        verified INTEGER NOT NULL DEFAULT 0,
+        untrusted_sanitized INTEGER NOT NULL DEFAULT 0,
+        expires_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_learning_actor_kind ON learning_records(actor_id, learning_kind);
+      CREATE INDEX IF NOT EXISTS idx_learning_actor_project ON learning_records(actor_id, project_name);
+
+      CREATE TABLE IF NOT EXISTS learned_procedures (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        description TEXT NOT NULL,
+        steps_json TEXT NOT NULL DEFAULT '[]',
+        requires_approval INTEGER NOT NULL DEFAULT 1,
+        approved_by_user INTEGER NOT NULL DEFAULT 0,
+        approved_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(actor_id, name)
+      );
+    `,
+  },
 ];
 
 /**

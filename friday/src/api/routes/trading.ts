@@ -130,20 +130,20 @@ tradingRoutes.post('/analyze', async (req, res) => {
 
   const series = Array.isArray(candles)
     ? normalizeAndValidateCandles({
-        instrument: {
-          exchange: ex,
-          symbol: sym,
-          name: sym,
-          instrumentType: 'CASH_EQUITY',
-          sector: 'GENERAL',
-          lotSize: 1,
-          tickSizeMinor: 5,
-        },
-        timeframe: tf,
-        sourceName: 'UserSuppliedCandles',
-        declaredQuality: 'HISTORICAL_FIXTURE',
-        rawCandles: candles as OhlcvCandle[],
-      })
+      instrument: {
+        exchange: ex,
+        symbol: sym,
+        name: sym,
+        instrumentType: 'CASH_EQUITY',
+        sector: 'GENERAL',
+        lotSize: 1,
+        tickSizeMinor: 5,
+      },
+      timeframe: tf,
+      sourceName: 'UserSuppliedCandles',
+      declaredQuality: 'HISTORICAL_FIXTURE',
+      rawCandles: candles as OhlcvCandle[],
+    })
     : await getMarketDataProvider().getCandles(ex, sym, tf);
 
   const evalResult = evaluateStrategies(series);
@@ -206,20 +206,20 @@ tradingRoutes.post('/backtest', async (req, res) => {
 
     const series = Array.isArray(candles)
       ? normalizeAndValidateCandles({
-          instrument: {
-            exchange: ex,
-            symbol: sym,
-            name: sym,
-            instrumentType: 'CASH_EQUITY',
-            sector: 'GENERAL',
-            lotSize: 1,
-            tickSizeMinor: 5,
-          },
-          timeframe: tf,
-          sourceName: 'UserSuppliedCandles',
-          declaredQuality: 'HISTORICAL_FIXTURE',
-          rawCandles: candles as OhlcvCandle[],
-        })
+        instrument: {
+          exchange: ex,
+          symbol: sym,
+          name: sym,
+          instrumentType: 'CASH_EQUITY',
+          sector: 'GENERAL',
+          lotSize: 1,
+          tickSizeMinor: 5,
+        },
+        timeframe: tf,
+        sourceName: 'UserSuppliedCandles',
+        declaredQuality: 'HISTORICAL_FIXTURE',
+        rawCandles: candles as OhlcvCandle[],
+      })
       : await getMarketDataProvider().getCandles(ex, sym, tf);
 
     const result = await runBacktest({
