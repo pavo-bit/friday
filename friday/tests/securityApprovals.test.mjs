@@ -540,4 +540,169 @@ describe('Phase 4: Persistent Security, Bound Approvals & WebSocket Auth', () =>
       /401/
     );
   });
+
+  it('Covers invalid ID, cancellation, concurrent double consumption, binding mismatches, expired token, and secret redaction', async () => {
+    const gate = getSafetyGate();
+    const store = await getMemoryStore();
+    const db = store.getDatabase();
+
+    // Invalid approval ID -> 404 & consume fails
+    const notFoundRes = await fetch(`${baseUrl}/friday/approvals/non-existent-id`, {
+      headers: { Authorization: `Bearer ${tokenA}` },
+    });
+    assert.equal(notFoundRes.status, 404);
+    const badConsume = await gate.consumeBoundApproval({
+      approvalId: 'non-existent-id',
+      taskId: 't',
+      stepId: 's',
+      capabilityId: 'c',
+      args: {},
+      actorId: `device:${deviceA.id}`,
+      deviceId: deviceA.id,
+      permissionScope: 'default',
+    });
+    assert.equal(badConsume.ok, false);
+
+    // Binding mismatches: wrong capabilityId, wrong taskId, wrong stepId, wrong deviceId
+    const bound = await gate.createBoundApproval({
+      taskId: 't-exact',
+      stepId: 's-exact',
+      capabilityId: 'cap.exact',
+      args: { apiKey: 'sk-super-secret-12345678901234567890' },
+      actorId: `device:${deviceA.id}`,
+      deviceId: deviceA.id,
+      permissionScope: 'fs:read',
+      riskLevel: 'high',
+      summary: 'Execute with token Bearer frd_1234567890abcdef1234567890abcdef',
+    });
+    // Secret redaction in summary
+    assert.ok(!bound.summary?.includes('frd_1234567890abcdef'));
+
+    await gate.resolveBoundApproval({
+      approvalId: bound.approvalId,
+      decision: 'APPROVE',
+      actorId: `device:${deviceA.id}`,
+    });
+
+    const wrongCap = await gate.consumeBoundApproval({
+      approvalId: bound.approvalId,
+      taskId: 't-exact',
+      stepId: 's-exact',
+      capabilityId: 'cap.other',
+      args: { apiKey: 'sk-super-secret-12345678901234567890' },
+      actorId: `device:${deviceA.id}`,
+      deviceId: deviceA.id,
+      permissionScope: 'fs:read',
+    });
+    assert.equal(wrongCap.ok, false);
+
+    const wrongTask = await gate.consumeBoundApproval({
+      approvalId: bound.approvalId,
+      taskId: 't-other',
+      stepId: 's-exact',
+      capabilityId: 'cap.exact',
+      args: { apiKey: 'sk-super-secret-12345678901234567890' },
+      actorId: `device:${deviceA.id}`,
+      deviceId: deviceA.id,
+      permissionScope: 'fs:read',
+    });
+    assert.equal(wrongTask.ok, false);
+
+    const wrongStep = await gate.consumeBoundApproval({
+      approvalId: bound.approvalId,
+      taskId: 't-exact',
+      stepId: 's-other',
+      capabilityId: 'cap.exact',
+      args: { apiKey: 'sk-super-secret-12345678901234567890' },
+      actorId: `device:${deviceA.id}`,
+      deviceId: deviceA.id,
+      permissionScope: 'fs:read',
+    });
+    assert.equal(wrongStep.ok, false);
+
+    const wrongDevice = await gate.consumeBoundApproval({
+      approvalId: bound.approvalId,
+      taskId: 't-exact',
+      stepId: 's-exact',
+      capabilityId: 'cap.exact',
+      args: { apiKey: 'sk-super-secret-12345678901234567890' },
+      actorId: `device:${deviceA.id}`,
+      deviceId: 'other-device-id',
+      permissionScope: 'fs:read',
+    });
+    assert.equal(wrongDevice.ok, false);
+
+    // Concurrent double consumption -> exactly one succeeds
+    const [c1, c2] = await Promise.all([
+      gate.consumeBoundApproval({
+        approvalId: bound.approvalId,
+        taskId: 't-exact',
+        stepId: 's-exact',
+        capabilityId: 'cap.exact',
+        args: { apiKey: 'sk-super-secret-12345678901234567890' },
+        actorId: `device:${deviceA.id}`,
+        deviceId: deviceA.id,
+        permissionScope: 'fs:read',
+      }),
+      gate.consumeBoundApproval({
+        approvalId: bound.approvalId,
+        taskId: 't-exact',
+        stepId: 's-exact',
+        capabilityId: 'cap.exact',
+        args: { apiKey: 'sk-super-secret-12345678901234567890' },
+        actorId: `device:${deviceA.id}`,
+        deviceId: deviceA.id,
+        permissionScope: 'fs:read',
+      }),
+    ]);
+    assert.equal([c1.ok, c2.ok].filter(Boolean).length, 1);
+
+    // Cancelled approval via HTTP
+    const cancelTarget = await gate.createBoundApproval({
+      taskId: 't-cancel-1',
+      stepId: 's-1',
+      capabilityId: 'cap.cancel',
+      args: {},
+      actorId: `device:${deviceA.id}`,
+      deviceId: deviceA.id,
+      permissionScope: 'default',
+      riskLevel: 'high',
+    });
+    const cancelRes = await fetch(`${baseUrl}/friday/approvals/${cancelTarget.approvalId}/cancel`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${tokenA}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'User cancelled' }),
+    });
+    assert.equal(cancelRes.status, 200);
+    const cancelBody = await cancelRes.json();
+    assert.equal(cancelBody.approval.status, 'CANCELLED');
+
+    // Expired device token rejected on HTTP & WebSocket
+    const auth = getAuthService();
+    const expCode = auth.generatePairingCode().code;
+    const expPaired = await auth.pairDevice({ code: expCode, name: 'Expired Device', platform: 'android' });
+    db.prepare(`UPDATE devices SET token_expires_at = ? WHERE id = ?`).run(
+      new Date(Date.now() - 10_000).toISOString(),
+      expPaired.device.id
+    );
+    const expHttpRes = await fetch(`${baseUrl}/friday/approvals`, {
+      headers: { Authorization: `Bearer ${expPaired.token}` },
+    });
+    assert.equal(expHttpRes.status, 401);
+    await assert.rejects(
+      () =>
+        new Promise((resolve, reject) => {
+          const ws = new WebSocket(wsBaseUrl, {
+            headers: { Authorization: `Bearer ${expPaired.token}` },
+          });
+          ws.on('open', () => {
+            ws.close();
+            resolve();
+          });
+          ws.on('unexpected-response', (_req, res) => reject(new Error(`HTTP ${res.statusCode}`)));
+          ws.on('error', reject);
+        }),
+      /401/
+    );
+  });
 });
