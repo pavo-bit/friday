@@ -696,6 +696,12 @@
           loadTasksAndPresentations();
         } else if (msg.type === 'presentation:event') {
           loadTasksAndPresentations();
+        } else if (msg.type === 'voice:state') {
+          handleVoiceStateUpdate(msg.payload);
+        } else if (msg.type === 'voice:wake') {
+          handleVoiceWakeUpdate(msg.payload);
+        } else if (msg.type === 'voice:transcript') {
+          handleVoiceTranscriptUpdate(msg.payload);
         }
       } catch {
         // Ignore malformed WS message
@@ -713,6 +719,7 @@
     loadTasksAndPresentations();
     loadFinanceOverview();
     loadTradingOverview();
+    loadVoiceStatus();
   }
 
   // Trading Copilot UI
@@ -920,6 +927,189 @@
       });
       finTxForm.reset();
       loadFinanceOverview();
+    });
+  }
+
+  // Voice Management UI (Phase 11)
+  function handleVoiceStateUpdate(payload) {
+    if (!payload) return;
+    const stateEl = document.getElementById('voiceStateVal');
+    const subEl = document.getElementById('voiceStateSub');
+    const micEl = document.getElementById('voiceMicVal');
+    const micSubEl = document.getElementById('voiceMicSub');
+    const micBtn = document.getElementById('micBtn');
+
+    if (stateEl) stateEl.textContent = payload.to || 'STANDBY';
+    if (subEl) subEl.textContent = payload.reason ? `Reason: ${payload.reason}` : 'Native Windows Runtime';
+
+    if (micEl && micSubEl) {
+      if (payload.to === 'MUTED') {
+        micEl.textContent = 'MUTED';
+        micSubEl.textContent = 'Hardware capture physically halted';
+        micEl.style.color = 'var(--warn)';
+      } else {
+        micEl.textContent = 'Active';
+        micSubEl.textContent = 'Hardware capture unmuted';
+        micEl.style.color = '';
+      }
+    }
+
+    if (micBtn) {
+      if (payload.to === 'LISTENING') {
+        micBtn.classList.add('listening');
+      } else {
+        micBtn.classList.remove('listening');
+      }
+    }
+  }
+
+  function handleVoiceWakeUpdate(payload) {
+    if (!payload) return;
+    const wakeSub = document.getElementById('voiceWakeSub');
+    if (wakeSub) {
+      wakeSub.textContent = `Wake detected: "${payload.phrase}"`;
+    }
+    const stateEl = document.getElementById('voiceStateVal');
+    if (stateEl) stateEl.textContent = 'WAKE_DETECTED';
+  }
+
+  function handleVoiceTranscriptUpdate(payload) {
+    if (!payload || !payload.text) return;
+    const input = document.getElementById('chatInput');
+    if (input) input.value = payload.text;
+  }
+
+  async function loadVoiceStatus() {
+    try {
+      const data = await api('/friday/voice/status');
+      const stateEl = document.getElementById('voiceStateVal');
+      const micEl = document.getElementById('voiceMicVal');
+      const wakeEl = document.getElementById('voiceWakeVal');
+      const healthEl = document.getElementById('voiceHealthVal');
+      const diagBox = document.getElementById('voiceDiagnosticsBox');
+
+      if (stateEl) stateEl.textContent = data.state || 'STANDBY';
+      if (micEl) micEl.textContent = data.health?.microphone?.muted ? 'MUTED' : 'Active';
+      if (wakeEl) wakeEl.textContent = data.settings?.wakeWordEnabled ? 'Listening' : 'Disabled';
+      if (healthEl) healthEl.textContent = (data.health?.status || 'healthy').toUpperCase();
+
+      if (diagBox) {
+        diagBox.textContent = JSON.stringify(data.health, null, 2);
+      }
+
+      const phrasesInput = document.getElementById('voiceInputPhrases');
+      const tzInput = document.getElementById('voiceInputTimezone');
+      const timeoutInput = document.getElementById('voiceInputListenTimeout');
+      const maxRecInput = document.getElementById('voiceInputMaxRecord');
+      const sensInput = document.getElementById('voiceInputSensitivity');
+      const sensVal = document.getElementById('voiceSensitivityVal');
+
+      if (phrasesInput && data.settings?.wakePhrases) {
+        phrasesInput.value = data.settings.wakePhrases.join(', ');
+      }
+      if (tzInput && data.settings?.timezone) {
+        tzInput.value = data.settings.timezone;
+      }
+      if (timeoutInput && data.settings?.listenTimeoutSeconds) {
+        timeoutInput.value = data.settings.listenTimeoutSeconds;
+      }
+      if (maxRecInput && data.settings?.maxRecordingSeconds) {
+        maxRecInput.value = data.settings.maxRecordingSeconds;
+      }
+      if (sensInput && data.settings?.sensitivity !== undefined) {
+        sensInput.value = data.settings.sensitivity;
+        if (sensVal) sensVal.textContent = data.settings.sensitivity;
+      }
+
+      // Check autostart
+      try {
+        const autoData = await api('/friday/voice/autostart');
+        const autoCheck = document.getElementById('voiceAutostartCheck');
+        if (autoCheck) autoCheck.checked = Boolean(autoData.enabled);
+      } catch {
+        // Ignore
+      }
+    } catch {
+      // Ignore transient voice load errors
+    }
+  }
+
+  // Voice action controls
+  const btnVoiceMute = document.getElementById('btnVoiceMute');
+  if (btnVoiceMute) {
+    btnVoiceMute.addEventListener('click', async () => {
+      await api('/friday/voice/mute', { method: 'POST' });
+      loadVoiceStatus();
+    });
+  }
+
+  const btnVoiceUnmute = document.getElementById('btnVoiceUnmute');
+  if (btnVoiceUnmute) {
+    btnVoiceUnmute.addEventListener('click', async () => {
+      await api('/friday/voice/unmute', { method: 'POST' });
+      loadVoiceStatus();
+    });
+  }
+
+  const btnVoiceSleep = document.getElementById('btnVoiceSleep');
+  if (btnVoiceSleep) {
+    btnVoiceSleep.addEventListener('click', async () => {
+      await api('/friday/voice/sleep', { method: 'POST' });
+      loadVoiceStatus();
+    });
+  }
+
+  const btnVoiceWake = document.getElementById('btnVoiceWake');
+  if (btnVoiceWake) {
+    btnVoiceWake.addEventListener('click', async () => {
+      await api('/friday/voice/wake', { method: 'POST' });
+      loadVoiceStatus();
+    });
+  }
+
+  const btnVoiceInterrupt = document.getElementById('btnVoiceInterrupt');
+  if (btnVoiceInterrupt) {
+    btnVoiceInterrupt.addEventListener('click', async () => {
+      await api('/friday/voice/interrupt', { method: 'POST' });
+    });
+  }
+
+  const voiceSensitivityInput = document.getElementById('voiceInputSensitivity');
+  if (voiceSensitivityInput) {
+    voiceSensitivityInput.addEventListener('input', () => {
+      const lbl = document.getElementById('voiceSensitivityVal');
+      if (lbl) lbl.textContent = voiceSensitivityInput.value;
+    });
+  }
+
+  const voiceSettingsForm = document.getElementById('voiceSettingsForm');
+  if (voiceSettingsForm) {
+    voiceSettingsForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const phrases = document.getElementById('voiceInputPhrases').value.split(',').map((p) => p.trim()).filter(Boolean);
+      const timezone = document.getElementById('voiceInputTimezone').value.trim();
+      const listenTimeoutSeconds = parseInt(document.getElementById('voiceInputListenTimeout').value, 10);
+      const maxRecordingSeconds = parseInt(document.getElementById('voiceInputMaxRecord').value, 10);
+      const sensitivity = parseFloat(document.getElementById('voiceInputSensitivity').value);
+      const autostart = document.getElementById('voiceAutostartCheck').checked;
+
+      await api('/friday/voice/settings', {
+        method: 'POST',
+        body: JSON.stringify({
+          wakePhrases: phrases,
+          timezone,
+          listenTimeoutSeconds,
+          maxRecordingSeconds,
+          sensitivity,
+        }),
+      });
+
+      await api('/friday/voice/autostart', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: autostart }),
+      });
+
+      loadVoiceStatus();
     });
   }
 

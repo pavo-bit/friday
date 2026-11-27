@@ -1,25 +1,22 @@
 // ============================================================
-// FRIDAY — Browser-native speech input
-// Microphone transcription is handled by the dashboard Web Speech API.
-// This server class remains as a safe compatibility boundary for audio routes.
+// FRIDAY — Speech-to-Text Compatibility Wrapper
+// Delegates to native SpeechRecognitionEngine
 // ============================================================
 
+import { getSpeechRecognitionEngine } from './speechRecognition';
 import { createLayerLogger } from '../shared/logger';
 
 const log = createLayerLogger('STT');
 
 export class SpeechToText {
-  constructor() {
-    log.info('STT engine: browser');
-  }
-
-  async transcribe(_audioBuffer: Buffer, _format = 'webm'): Promise<string> {
-    log.warn('Server-side STT is disabled; use browser microphone transcription.');
-    return '';
+  async transcribe(audioBuffer: Buffer, _format = 'webm'): Promise<string> {
+    const engine = getSpeechRecognitionEngine();
+    const result = await engine.transcribe(audioBuffer);
+    return result.text;
   }
 
   isAvailable(): boolean {
-    return false;
+    return getSpeechRecognitionEngine().isReady();
   }
 }
 

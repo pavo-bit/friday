@@ -18,6 +18,7 @@ import { getMemoryStore } from './memory/store';
 import { getMonitoringEngine } from './services/monitoringEngine';
 import { getSchedulerService } from './services/schedulerService';
 import { getBackgroundOrchestrator } from './orchestration/backgroundOrchestrator';
+import { getVoiceService } from './voice/voiceService';
 
 const log = createLayerLogger('Core');
 
@@ -93,7 +94,11 @@ async function boot(): Promise<void> {
   const server = new FridayServer();
   await server.start();
 
-  // Step 6: Register shutdown handlers
+  // Step 6: Start Native Windows Voice Service
+  const voiceService = getVoiceService();
+  await voiceService.start();
+
+  // Step 7: Register shutdown handlers
   const shutdown = async (signal: string) => {
     log.info(`Received ${signal} — shutting down gracefully...`);
     eventBus.emitEvent('system:shutdown');
@@ -101,6 +106,7 @@ async function boot(): Promise<void> {
     getMonitoringEngine().stopAll();
     getSchedulerService().stop();
     bridge.cancelAll();
+    await voiceService.stop();
     await server.stop();
 
     try {

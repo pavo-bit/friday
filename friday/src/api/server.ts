@@ -21,6 +21,7 @@ import { approvalRoutes } from './routes/approvals';
 import { presentationRoutes } from './routes/presentations';
 import { financeRoutes } from './routes/finance';
 import { tradingRoutes } from './routes/trading';
+import { voiceRoutes } from './routes/voice';
 import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
@@ -132,6 +133,7 @@ export class FridayServer {
 
   /** Mount API routes */
   private setupRoutes(): void {
+    this.app.use('/friday/voice', voiceRoutes);
     this.app.use('/friday', fridayRoutes);
     this.app.use('/friday/memory', memoryRoutes);
     this.app.use('/friday/tasks', taskRoutes);

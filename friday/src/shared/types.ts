@@ -165,6 +165,9 @@ export enum WsMessageType {
   REMINDER_TRIGGERED = 'reminder:triggered',
   TASK_EVENT = 'task:event',
   PRESENTATION_EVENT = 'presentation:event',
+  VOICE_STATE = 'voice:state',
+  VOICE_WAKE = 'voice:wake',
+  VOICE_TRANSCRIPT = 'voice:transcript',
   ERROR = 'error',
 }
 
@@ -189,9 +192,19 @@ export interface FridayConfig {
   requireHighRiskApproval: boolean;
 
   // Voice
-  sttEngine: 'none';
-  ttsEngine: 'edge' | 'none';
+  sttEngine: 'none' | 'whisper' | 'vosk';
+  ttsEngine: 'edge' | 'sapi' | 'none';
   wakeWord: string;
+  voiceEnabled?: boolean;
+  voiceAutostart?: boolean;
+  voiceWakeWordEnabled?: boolean;
+  voiceWakePhrases?: string[];
+  voiceTimezone?: string;
+  voiceDefaultLanguage?: string;
+  voiceListenTimeoutSeconds?: number;
+  voiceMaxRecordingSeconds?: number;
+  voiceTtsEnabled?: boolean;
+  voiceLocalOnly?: boolean;
 
   // Memory
   dbPath: string;

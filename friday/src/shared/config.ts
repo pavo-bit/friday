@@ -52,6 +52,19 @@ export function loadConfig(): FridayConfig {
     sttEngine: (process.env.STT_ENGINE as FridayConfig['sttEngine']) || 'none',
     ttsEngine: (process.env.TTS_ENGINE as FridayConfig['ttsEngine']) || 'none',
     wakeWord: process.env.WAKE_WORD || 'friday',
+    voiceEnabled: process.env.FRIDAY_VOICE_ENABLED !== 'false',
+    voiceAutostart: process.env.FRIDAY_VOICE_AUTOSTART === 'true',
+    voiceWakeWordEnabled: process.env.FRIDAY_VOICE_WAKE_WORD_ENABLED !== 'false',
+    voiceWakePhrases: (process.env.FRIDAY_VOICE_WAKE_PHRASES || 'hey_friday,hello_friday,wake_up_friday')
+      .split(',')
+      .map((p) => p.trim().toLowerCase().replace(/_/g, ' '))
+      .filter(Boolean),
+    voiceTimezone: process.env.FRIDAY_VOICE_TIMEZONE || 'Asia/Kolkata',
+    voiceDefaultLanguage: process.env.FRIDAY_VOICE_DEFAULT_LANGUAGE || 'en',
+    voiceListenTimeoutSeconds: parseInt(process.env.FRIDAY_VOICE_LISTEN_TIMEOUT_SECONDS || '12', 10),
+    voiceMaxRecordingSeconds: parseInt(process.env.FRIDAY_VOICE_MAX_RECORDING_SECONDS || '30', 10),
+    voiceTtsEnabled: process.env.FRIDAY_VOICE_TTS_ENABLED !== 'false',
+    voiceLocalOnly: process.env.FRIDAY_VOICE_LOCAL_ONLY !== 'false',
 
     // Memory
     dbPath: process.env.FRIDAY_DB_PATH || path.join(ROOT, 'data', 'friday.db'),
