@@ -20,6 +20,7 @@ import { taskRoutes } from './routes/tasks';
 import { approvalRoutes } from './routes/approvals';
 import { presentationRoutes } from './routes/presentations';
 import { financeRoutes } from './routes/finance';
+import { tradingRoutes } from './routes/trading';
 import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
@@ -136,6 +137,7 @@ export class FridayServer {
     this.app.use('/friday/tasks', taskRoutes);
     this.app.use('/friday/approvals', approvalRoutes);
     this.app.use('/friday/finance', financeRoutes);
+    this.app.use('/friday/trading', tradingRoutes);
     this.app.use('/friday', presentationRoutes);
     this.app.use('/friday', healthRoutes);
     this.app.use('/friday', assistantRoutes);

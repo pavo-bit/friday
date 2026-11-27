@@ -1232,6 +1232,10 @@ export class CapabilityRegistry {
     // Register Financial Intelligence capabilities (Phase 6)
     const { registerFinanceCapabilities } = require('../finance/financeCapabilities');
     registerFinanceCapabilities(this);
+
+    // Register Trading Copilot capabilities (Phase 7)
+    const { registerTradingCapabilities } = require('../trading/tradingCapabilities');
+    registerTradingCapabilities(this);
   }
 }
 

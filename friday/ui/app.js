@@ -710,6 +710,98 @@
     loadSettings();
     loadTasksAndPresentations();
     loadFinanceOverview();
+    loadTradingOverview();
+  }
+
+  // Trading Copilot UI
+  async function loadTradingOverview() {
+    const capEl = document.getElementById('trdCapitalVal');
+    if (!capEl) return;
+    try {
+      const data = await api('/friday/trading/overview');
+      const s = data.session;
+      if (s && s.confirmedByUser) {
+        capEl.textContent = `${s.currency} ${(s.allocatedCapitalMinor / 100).toFixed(2)}`;
+        document.getElementById('trdCapitalSub').textContent =
+          `Available: ${(s.availableForNewPositionsMinor / 100).toFixed(2)} · Reserved: ${(s.reservedCapitalMinor / 100).toFixed(2)}`;
+        document.getElementById('trdRiskBudgetVal').textContent =
+          `${s.currency} ${(s.remainingDailyRiskMinor / 100).toFixed(2)}`;
+        document.getElementById('trdPnlVal').textContent =
+          `${s.currency} ${(s.realizedPnlMinor / 100).toFixed(2)}`;
+      } else {
+        capEl.textContent = 'Unconfirmed';
+      }
+
+      const rc = data.riskConfig;
+      document.getElementById('trdRiskConfigSub').textContent = rc
+        ? `Max risk ${(rc.maxRiskPerTradeBps / 100).toFixed(2)}% · Daily ${(rc.maxDailyLossBps / 100).toFixed(2)}%`
+        : 'Risk limits: Not configured';
+
+      const watchEl = document.getElementById('trdWatchlist');
+      watchEl.textContent = '';
+      if (!data.watchlist || !data.watchlist.length) {
+        const h = document.createElement('div');
+        h.className = 'hint';
+        h.textContent = 'No NSE/BSE instruments in watchlist yet.';
+        watchEl.appendChild(h);
+      } else {
+        for (const w of data.watchlist) {
+          const item = document.createElement('div');
+          item.className = 'list-item';
+          const title = document.createElement('div');
+          title.className = 'list-item-title';
+          title.textContent = `${w.exchange}:${w.symbol} (${w.instrumentType})`;
+          const sub = document.createElement('div');
+          sub.className = 'list-item-sub';
+          sub.textContent = `Sector: ${w.sector} · Lot: ${w.lotSize}`;
+          item.appendChild(title);
+          item.appendChild(sub);
+          watchEl.appendChild(item);
+        }
+      }
+
+      const jEl = document.getElementById('trdJournalList');
+      jEl.textContent = '';
+      if (!data.journal || !data.journal.length) {
+        const h = document.createElement('div');
+        h.className = 'hint';
+        h.textContent = 'No manual journal entries recorded yet.';
+        jEl.appendChild(h);
+      } else {
+        for (const j of data.journal) {
+          const item = document.createElement('div');
+          item.className = 'list-item';
+          const title = document.createElement('div');
+          title.className = 'list-item-title';
+          title.textContent = `${j.exchange}:${j.symbol} ${j.side} x${j.quantity} (${j.status})`;
+          const sub = document.createElement('div');
+          sub.className = 'list-item-sub';
+          sub.textContent = `Entry ${j.entryPriceFormatted} · P&L ${j.realizedPnlFormatted} · ${j.sourceClassification}`;
+          item.appendChild(title);
+          item.appendChild(sub);
+          jEl.appendChild(item);
+        }
+      }
+    } catch {
+      // Ignore transient trading load errors
+    }
+  }
+
+  const trdCapitalForm = document.getElementById('trdCapitalForm');
+  if (trdCapitalForm) {
+    trdCapitalForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await api('/friday/trading/capital/confirm', {
+        method: 'POST',
+        body: JSON.stringify({
+          totalEquity: document.getElementById('trdTotalEq').value,
+          availableCash: document.getElementById('trdAvailCash').value,
+          allocatedCapital: document.getElementById('trdAllocCap').value,
+          confirmedByUser: true,
+        }),
+      });
+      loadTradingOverview();
+    });
   }
 
   // Financial Intelligence UI

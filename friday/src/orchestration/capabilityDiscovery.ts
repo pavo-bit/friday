@@ -267,7 +267,7 @@ export class CapabilityDiscoveryEngine {
         };
       }
     }
-    if (/\b(budget|budget\s+utilization|over\s+budget)\b/i.test(lower)) {
+    if (/\b(budget\s+utilization|over\s+budget)\b/i.test(lower) || (/\bbudget\b/i.test(lower) && !/\brisk\s+budget\b/i.test(lower))) {
       const cap = this.registry.get('finance.budget_status');
       if (cap && cap.enabled) {
         return {
@@ -325,6 +325,73 @@ export class CapabilityDiscoveryEngine {
           confidence: 0.92,
           suggestedArguments: {},
           missingInputs: [],
+        };
+      }
+    }
+
+    // Trading Copilot deterministic discovery
+    if (/\b(remaining\s+risk\s+budget|risk\s+budget|trading\s+capital)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.risk_budget');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Risk budget inquiry matched trading.risk_budget',
+          confidence: 0.94,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(trading\s+journal|review\s+my\s+trading\s+journal|trade\s+journal)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.journal_review');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Trading journal inquiry matched trading.journal_review',
+          confidence: 0.94,
+          suggestedArguments: {},
+          missingInputs: [],
+        };
+      }
+    }
+    if (/\b(backtest|back-test)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.backtest');
+      if (cap && cap.enabled) {
+        const symMatch = clause.match(/\b([A-Z]{2,12})\b/);
+        return {
+          capability: cap,
+          matchReason: 'Backtest inquiry matched trading.backtest',
+          confidence: 0.9,
+          suggestedArguments: symMatch ? { symbol: symMatch[1], strategyId: 'vwap_trend_continuation' } : {},
+          missingInputs: symMatch ? [] : ['symbol', 'strategyId'],
+          clarificationQuestion: symMatch ? undefined : 'Which NSE/BSE symbol and strategy would you like to backtest?',
+        };
+      }
+    }
+    if (/\b(position\s+size|calculate\s+position\s+size)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.position_size');
+      if (cap && cap.enabled) {
+        return {
+          capability: cap,
+          matchReason: 'Position size inquiry matched trading.position_size',
+          confidence: 0.9,
+          suggestedArguments: {},
+          missingInputs: ['symbol', 'direction', 'entryPrice', 'stopLoss', 'target'],
+          clarificationQuestion: 'Please provide symbol, direction, entryPrice, stopLoss, and target.',
+        };
+      }
+    }
+    if (/\b(analyze\s+(?:this\s+)?stock|intraday\s+setups?|find\s+intraday\s+setups?)\b/i.test(lower)) {
+      const cap = this.registry.get('trading.analyze_stock');
+      if (cap && cap.enabled) {
+        const symMatch = clause.match(/\b([A-Z]{2,12})\b/);
+        return {
+          capability: cap,
+          matchReason: 'Stock analysis inquiry matched trading.analyze_stock',
+          confidence: 0.9,
+          suggestedArguments: symMatch ? { symbol: symMatch[1] } : {},
+          missingInputs: symMatch ? [] : ['symbol'],
+          clarificationQuestion: symMatch ? undefined : 'Which NSE/BSE stock symbol would you like me to analyze?',
         };
       }
     }

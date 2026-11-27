@@ -23,6 +23,7 @@
       <nav class="nav">
         <button class="nav-btn active" data-tab="command">Command Center</button>
         <button class="nav-btn" data-tab="finance">Financial Intelligence</button>
+        <button class="nav-btn" data-tab="trading">Trading Copilot</button>
         <button class="nav-btn" data-tab="monitoring">Monitoring <span class="badge" id="navWatcherCount">0</span></button>
         <button class="nav-btn" data-tab="reminders">Reminders <span class="badge" id="navReminderCount">0</span></button>
         <button class="nav-btn" data-tab="notifications">Notifications <span class="badge warn" id="navNotifCount">0</span></button>
@@ -185,6 +186,53 @@
           <div class="card">
             <div class="card-header"><h2>Portfolio Allocation</h2></div>
             <div class="list-container" id="finHoldingsList"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- TAB: TRADING COPILOT -->
+      <section class="tab-panel" id="tab-trading">
+        <div class="stats-grid">
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Session Capital</div>
+            <div class="stat-value" id="trdCapitalVal">Unconfirmed</div>
+            <div class="stat-sub" id="trdCapitalSub">Confirm capital before sizing</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Remaining Daily Risk</div>
+            <div class="stat-value" id="trdRiskBudgetVal">--</div>
+            <div class="stat-sub" id="trdRiskConfigSub">Risk limits: Not configured</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Session Realized P&amp;L</div>
+            <div class="stat-value" id="trdPnlVal">INR 0.00</div>
+            <div class="stat-sub">Decision-support only (no auto-execution)</div>
+          </div>
+          <div class="card stat-card jarvis-panel">
+            <div class="stat-label">Market Data Mode</div>
+            <div class="stat-value" id="trdDataQuality">NO LIVE FEED</div>
+            <div class="stat-sub">NSE/BSE Cash Equity (5m/15m/1h)</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header"><h2>Confirm Session Capital (NSE/BSE)</h2></div>
+          <form class="form-row" id="trdCapitalForm">
+            <input type="number" step="0.01" min="1" id="trdTotalEq" placeholder="Total Equity (INR)" required>
+            <input type="number" step="0.01" min="1" id="trdAvailCash" placeholder="Available Cash (INR)" required>
+            <input type="number" step="0.01" min="1" id="trdAllocCap" placeholder="Allocated Trading Capital (INR)" required>
+            <button type="submit" class="btn-primary">Confirm Capital</button>
+          </form>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <div class="card-header"><h2>Watchlist (NSE/BSE)</h2></div>
+            <div class="list-container" id="trdWatchlist"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h2>Trading Journal (User-Entered)</h2></div>
+            <div class="list-container" id="trdJournalList"></div>
           </div>
         </div>
       </section>

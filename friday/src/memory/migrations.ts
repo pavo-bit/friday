@@ -448,6 +448,112 @@ export const MIGRATIONS: Migration[] = [
       CREATE INDEX IF NOT EXISTS idx_fin_trading_cap_owner ON financial_trading_capital_allocations(owner_id, created_at);
     `,
   },
+  {
+    version: 7,
+    name: 'trading_copilot_deterministic_foundation',
+    sql: `
+      CREATE TABLE IF NOT EXISTS trading_capital_sessions (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        session_date TEXT NOT NULL,
+        total_equity_minor INTEGER NOT NULL,
+        available_cash_minor INTEGER NOT NULL,
+        allocated_capital_minor INTEGER NOT NULL,
+        reserved_capital_minor INTEGER NOT NULL DEFAULT 0,
+        realized_pnl_minor INTEGER NOT NULL DEFAULT 0,
+        unrealized_pnl_minor INTEGER NOT NULL DEFAULT 0,
+        daily_risk_budget_minor INTEGER NOT NULL DEFAULT 0,
+        remaining_daily_risk_minor INTEGER NOT NULL DEFAULT 0,
+        currency TEXT NOT NULL DEFAULT 'INR',
+        confirmed_by_user INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(owner_id, session_date)
+      );
+      CREATE INDEX IF NOT EXISTS idx_trd_cap_owner ON trading_capital_sessions(owner_id, session_date);
+
+      CREATE TABLE IF NOT EXISTS trading_capital_snapshots (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES trading_capital_sessions(id) ON DELETE CASCADE,
+        owner_id TEXT NOT NULL,
+        allocated_capital_minor INTEGER NOT NULL,
+        available_cash_minor INTEGER NOT NULL,
+        reserved_capital_minor INTEGER NOT NULL,
+        realized_pnl_minor INTEGER NOT NULL,
+        remaining_daily_risk_minor INTEGER NOT NULL,
+        note TEXT NOT NULL DEFAULT '',
+        recorded_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_trd_cap_snap_owner ON trading_capital_snapshots(owner_id, recorded_at);
+
+      CREATE TABLE IF NOT EXISTS trading_risk_configs (
+        owner_id TEXT PRIMARY KEY,
+        max_risk_per_trade_bps INTEGER NOT NULL,
+        max_daily_loss_bps INTEGER NOT NULL,
+        max_open_positions INTEGER NOT NULL,
+        max_capital_allocation_bps INTEGER NOT NULL,
+        max_concentration_bps INTEGER NOT NULL,
+        max_consecutive_losses INTEGER NOT NULL,
+        min_reward_risk_bps INTEGER NOT NULL,
+        allowed_exchanges_json TEXT NOT NULL DEFAULT '["NSE","BSE"]',
+        allowed_instruments_json TEXT NOT NULL DEFAULT '["CASH_EQUITY"]',
+        session_start_ist TEXT NOT NULL DEFAULT '09:15',
+        session_end_ist TEXT NOT NULL DEFAULT '15:30',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS trading_watchlists (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        exchange TEXT NOT NULL CHECK(exchange IN ('NSE', 'BSE')),
+        symbol TEXT NOT NULL,
+        instrument_type TEXT NOT NULL DEFAULT 'CASH_EQUITY',
+        sector TEXT NOT NULL DEFAULT 'GENERAL',
+        lot_size INTEGER NOT NULL DEFAULT 1,
+        notes TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(owner_id, exchange, symbol)
+      );
+      CREATE INDEX IF NOT EXISTS idx_trd_watch_owner ON trading_watchlists(owner_id);
+
+      CREATE TABLE IF NOT EXISTS trading_journal_entries (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        exchange TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        side TEXT NOT NULL CHECK(side IN ('LONG', 'SHORT')),
+        quantity INTEGER NOT NULL,
+        entry_price_minor INTEGER NOT NULL,
+        exit_price_minor INTEGER,
+        stop_loss_minor INTEGER NOT NULL,
+        target_minor INTEGER NOT NULL,
+        strategy_id TEXT NOT NULL DEFAULT 'manual',
+        entry_at TEXT NOT NULL,
+        exit_at TEXT,
+        charges_minor INTEGER NOT NULL DEFAULT 0,
+        slippage_minor INTEGER NOT NULL DEFAULT 0,
+        realized_pnl_minor INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'CLOSED')),
+        notes TEXT NOT NULL DEFAULT '',
+        source_classification TEXT NOT NULL DEFAULT 'USER_ENTERED',
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_trd_journal_owner ON trading_journal_entries(owner_id, entry_at);
+
+      CREATE TABLE IF NOT EXISTS trading_backtest_runs (
+        id TEXT PRIMARY KEY,
+        owner_id TEXT NOT NULL,
+        strategy_id TEXT NOT NULL,
+        strategy_version TEXT NOT NULL,
+        symbol TEXT NOT NULL,
+        timeframe TEXT NOT NULL,
+        metrics_json TEXT NOT NULL,
+        trades_count INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_trd_bt_owner ON trading_backtest_runs(owner_id, created_at);
+    `,
+  },
 ];
 
 /**
