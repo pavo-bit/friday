@@ -2,9 +2,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../core/errors/friday_exception.dart';
 import '../core/networking/connection_state.dart';
 import '../core/networking/friday_dio_client.dart';
+import '../core/networking/friday_ws_client.dart';
 import '../core/security/secure_storage_service.dart';
 import '../core/storage/local_database.dart';
+import '../features/device_monitoring/device_control_service.dart';
 import '../features/device_monitoring/phone_telemetry_service.dart';
+import '../services/companion_api_service.dart';
 import 'app_config.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
@@ -23,6 +26,27 @@ final dioClientProvider = Provider<FridayDioClient>((ref) {
   final cfg = ref.watch(appConfigProvider);
   return FridayDioClient(
       baseUrl: cfg.defaultBaseUrl, timeout: cfg.requestTimeout);
+});
+
+final wsClientProvider = Provider<FridayWsClient>((ref) {
+  final ws = FridayWsClient();
+  ref.onDispose(ws.disconnect);
+  return ws;
+});
+
+final companionApiProvider = Provider<CompanionApiService>((ref) {
+  return CompanionApiService(ref.watch(dioClientProvider));
+});
+
+final screenShareProvider =
+    StateNotifierProvider<ScreenShareController, ScreenShareState>((ref) {
+  return ScreenShareController();
+});
+
+final permissionPrivacyProvider =
+    StateNotifierProvider<PermissionPrivacyNotifier, PermissionPrivacyState>(
+        (ref) {
+  return PermissionPrivacyNotifier();
 });
 
 final connectionStateProvider =
@@ -236,14 +260,19 @@ class CompanionController {
   Future<void> unpairAndLogout() async {
     final storage = _ref.read(secureStorageProvider);
     final dio = _ref.read(dioClientProvider);
+    final ws = _ref.read(wsClientProvider);
+    final db = _ref.read(localDatabaseProvider);
+    ws.disconnect();
     await storage.delete(SecureKeys.bearerToken);
     await storage.delete(SecureKeys.deviceId);
     dio.clearToken();
+    await db.clearAll();
+    _ref.read(cachedMessagesProvider.notifier).state = const [];
     _ref
         .read(connectionStateProvider.notifier)
         .setAuthRequired(detail: 'Device unpaired.');
     await _recordActivity(
-        'device_unpaired', 'Cleared local credentials', 'standalone');
+        'device_unpaired', 'Cleared local credentials and cached data', 'standalone');
   }
 
   Future<void> _recordActivity(

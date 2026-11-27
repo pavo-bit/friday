@@ -53,6 +53,20 @@ class FridayDioClient {
     );
   }
 
+  Future<Map<String, dynamic>> put(String path,
+      {Map<String, dynamic>? data}) async {
+    return _wrap(
+      () => _dio.put<Map<String, dynamic>>(path,
+          data: data, options: _authOptions()),
+    );
+  }
+
+  Future<Map<String, dynamic>> delete(String path) async {
+    return _wrap(
+      () => _dio.delete<Map<String, dynamic>>(path, options: _authOptions()),
+    );
+  }
+
   Future<Map<String, dynamic>> _wrap(
     Future<Response<Map<String, dynamic>>> Function() call,
   ) async {

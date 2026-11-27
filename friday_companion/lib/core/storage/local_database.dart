@@ -31,12 +31,27 @@ class LocalActivityRecord {
   });
 }
 
+class CachedSnapshotRecord {
+  final String key;
+  final String payloadJson;
+  final String updatedAt;
+
+  const CachedSnapshotRecord({
+    required this.key,
+    required this.payloadJson,
+    required this.updatedAt,
+  });
+}
+
 abstract class LocalDatabase {
   Future<void> initialize();
   Future<void> saveMessage(CachedConversationItem item);
   Future<List<CachedConversationItem>> getMessages({int limit = 50});
   Future<void> logActivity(LocalActivityRecord record);
   Future<List<LocalActivityRecord>> getActivities({int limit = 50});
+  Future<void> saveCacheSnapshot(String key, String payloadJson, String updatedAt);
+  Future<CachedSnapshotRecord?> getCacheSnapshot(String key);
+  Future<void> clearAll();
   Future<void> close();
 }
 
@@ -50,7 +65,7 @@ class SqliteLocalDatabase implements LocalDatabase {
     final fullPath = p.join(dbPath, 'friday_companion.db');
     _db = await openDatabase(
       fullPath,
-      version: 1,
+      version: 2,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE cached_messages (
@@ -69,6 +84,24 @@ class SqliteLocalDatabase implements LocalDatabase {
             created_at TEXT NOT NULL
           )
         ''');
+        await db.execute('''
+          CREATE TABLE cached_snapshots (
+            cache_key TEXT PRIMARY KEY,
+            payload_json TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+          )
+        ''');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('''
+            CREATE TABLE IF NOT EXISTS cached_snapshots (
+              cache_key TEXT PRIMARY KEY,
+              payload_json TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+          ''');
+        }
       },
     );
   }
@@ -146,6 +179,48 @@ class SqliteLocalDatabase implements LocalDatabase {
   }
 
   @override
+  Future<void> saveCacheSnapshot(
+      String key, String payloadJson, String updatedAt) async {
+    await initialize();
+    await _db?.insert(
+      'cached_snapshots',
+      {
+        'cache_key': key,
+        'payload_json': payloadJson,
+        'updated_at': updatedAt,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+  }
+
+  @override
+  Future<CachedSnapshotRecord?> getCacheSnapshot(String key) async {
+    await initialize();
+    final rows = await _db?.query(
+          'cached_snapshots',
+          where: 'cache_key = ?',
+          whereArgs: [key],
+          limit: 1,
+        ) ??
+        [];
+    if (rows.isEmpty) return null;
+    final r = rows.first;
+    return CachedSnapshotRecord(
+      key: r['cache_key'].toString(),
+      payloadJson: r['payload_json'].toString(),
+      updatedAt: r['updated_at'].toString(),
+    );
+  }
+
+  @override
+  Future<void> clearAll() async {
+    await initialize();
+    await _db?.delete('cached_messages');
+    await _db?.delete('activity_history');
+    await _db?.delete('cached_snapshots');
+  }
+
+  @override
   Future<void> close() async {
     await _db?.close();
     _db = null;
@@ -155,6 +230,7 @@ class SqliteLocalDatabase implements LocalDatabase {
 class InMemoryLocalDatabase implements LocalDatabase {
   final List<CachedConversationItem> _messages = [];
   final List<LocalActivityRecord> _activities = [];
+  final Map<String, CachedSnapshotRecord> _snapshots = {};
 
   @override
   Future<void> initialize() async {}
@@ -179,6 +255,28 @@ class InMemoryLocalDatabase implements LocalDatabase {
   @override
   Future<List<LocalActivityRecord>> getActivities({int limit = 50}) async {
     return _activities.take(limit).toList();
+  }
+
+  @override
+  Future<void> saveCacheSnapshot(
+      String key, String payloadJson, String updatedAt) async {
+    _snapshots[key] = CachedSnapshotRecord(
+      key: key,
+      payloadJson: payloadJson,
+      updatedAt: updatedAt,
+    );
+  }
+
+  @override
+  Future<CachedSnapshotRecord?> getCacheSnapshot(String key) async {
+    return _snapshots[key];
+  }
+
+  @override
+  Future<void> clearAll() async {
+    _messages.clear();
+    _activities.clear();
+    _snapshots.clear();
   }
 
   @override
