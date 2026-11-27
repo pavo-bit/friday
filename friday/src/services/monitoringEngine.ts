@@ -6,6 +6,8 @@
 
 import { v4 as uuidv4 } from 'uuid';
 import * as net from 'net';
+import * as os from 'os';
+import * as fs from 'fs';
 import { getMemoryStore } from '../memory/store';
 import { getNotificationService } from './notificationService';
 import { createLayerLogger } from '../shared/logger';
@@ -14,9 +16,46 @@ import { WsMessageType } from '../shared/types';
 
 const log = createLayerLogger('Monitoring');
 
-export type MonitorMethod = 'http_health' | 'prometheus' | 'grafana' | 'json_api' | 'postgres' | 'redis';
+export type MonitorMethod =
+  | 'http_health'
+  | 'prometheus'
+  | 'grafana'
+  | 'json_api'
+  | 'postgres'
+  | 'redis'
+  | 'cpu_memory'
+  | 'disk_usage'
+  | 'network'
+  | 'app_logs';
 export type WatcherStatus = 'active' | 'paused' | 'stopped';
 export type WatcherHealth = 'healthy' | 'degraded' | 'offline' | 'unknown';
+export type IncidentStage =
+  | 'OBSERVATION'
+  | 'SUSPICION'
+  | 'VERIFIED_INCIDENT'
+  | 'RECOMMENDATION'
+  | 'APPROVED_ACTION'
+  | 'VERIFIED_RECOVERY';
+
+export interface MonitoringIncident {
+  id: string;
+  watcherId: string;
+  actorId: string;
+  projectName: string;
+  environment: string;
+  stage: IncidentStage;
+  severity: 'info' | 'warning' | 'critical';
+  classification: string;
+  title: string;
+  summary: string;
+  recommendation: string;
+  occurrenceCount: number;
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
+  resolvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
 
 export interface WatcherRecord {
   id: string;
@@ -36,6 +75,11 @@ export interface WatcherRecord {
   lastFailureAt: string | null;
   lastError: string | null;
   isDefault: boolean;
+  projectName: string;
+  environment: string;
+  latencyThresholdMs: number;
+  actorId: string;
+  stale: boolean;
   workerRunning: boolean;
   createdAt: string;
 }
@@ -59,6 +103,10 @@ export interface CreateWatcherInput {
   metricQuery?: string;
   metricThreshold?: number | null;
   isDefault?: boolean;
+  projectName?: string;
+  environment?: string;
+  latencyThresholdMs?: number;
+  actorId?: string;
 }
 
 const MIN_INTERVAL_MS = 5_000;
@@ -101,6 +149,10 @@ export class MonitoringEngine {
     const timeoutMs = Math.min(30_000, Math.max(1_000, input.timeoutMs ?? 5_000));
     const failureThreshold = Math.max(1, input.failureThreshold ?? 2);
     const method: MonitorMethod = input.method || 'http_health';
+    const latencyThresholdMs = Math.max(100, input.latencyThresholdMs ?? 2_000);
+    const projectName = (input.projectName || '').trim();
+    const environment = (input.environment || 'production').trim();
+    const actorId = (input.actorId || 'local').trim();
     const id = uuidv4();
 
     const tx = db.transaction(() => {
@@ -110,8 +162,9 @@ export class MonitoringEngine {
       db.prepare(
         `INSERT INTO watchers (
           id, name, target_url, method, interval_ms, timeout_ms, failure_threshold,
-          metric_query, metric_threshold, status, health, is_default
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'unknown', ?)`
+          metric_query, metric_threshold, status, health, is_default,
+          project_name, environment, latency_threshold_ms, actor_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', 'unknown', ?, ?, ?, ?, ?)`
       ).run(
         id,
         input.name.trim(),
@@ -122,7 +175,11 @@ export class MonitoringEngine {
         failureThreshold,
         input.metricQuery || '',
         input.metricThreshold ?? null,
-        input.isDefault ? 1 : 0
+        input.isDefault ? 1 : 0,
+        projectName,
+        environment,
+        latencyThresholdMs,
+        actorId
       );
     });
     tx();
@@ -151,7 +208,16 @@ export class MonitoringEngine {
       throw new Error('Target URL cannot be empty.');
     }
 
-    if (method === 'postgres' || method === 'redis') {
+    if (method === 'cpu_memory') {
+      return trimmed.startsWith('system://') ? trimmed : `system://${trimmed}`;
+    }
+    if (method === 'disk_usage') {
+      return trimmed.startsWith('disk://') ? trimmed : `disk://${trimmed}`;
+    }
+    if (method === 'app_logs') {
+      return trimmed.startsWith('log://') || trimmed.startsWith('file://') ? trimmed : `log://${trimmed}`;
+    }
+    if (method === 'postgres' || method === 'redis' || method === 'network') {
       const normalized = trimmed.includes('://') ? trimmed : `${method}://${trimmed}`;
       const parsed = new URL(normalized);
       if (!parsed.hostname) {
@@ -226,9 +292,95 @@ export class MonitoringEngine {
     const started = Date.now();
     const checkedAt = new Date().toISOString();
 
-    if (watcher.method === 'postgres' || watcher.method === 'redis') {
+    if (watcher.method === 'cpu_memory') {
+      const totalMem = os.totalmem();
+      const freeMem = os.freemem();
+      const memUsedPct = Math.round(((totalMem - freeMem) / totalMem) * 1000) / 10;
+      const cpuCount = os.cpus().length || 1;
+      const load1 = os.loadavg()[0] || 0;
+      const cpuPct = Math.min(100, Math.round((load1 / cpuCount) * 1000) / 10);
+      const threshold = watcher.metricThreshold ?? 90;
+      const maxUsed = Math.max(memUsedPct, cpuPct);
+      const degraded = maxUsed > threshold;
+      return {
+        watcherId: watcher.id,
+        status: degraded ? 'degraded' : 'healthy',
+        statusCode: 200,
+        latencyMs: Date.now() - started,
+        message: `CPU ${cpuPct}%, RAM ${memUsedPct}% (threshold ${threshold}%)`,
+        checkedAt,
+      };
+    }
+
+    if (watcher.method === 'disk_usage') {
+      const targetPath = watcher.targetUrl.replace(/^disk:\/\//i, '') || process.cwd();
+      try {
+        const stats = fs.statfsSync(targetPath);
+        const total = stats.blocks * stats.bsize;
+        const free = stats.bfree * stats.bsize;
+        const usedPct = total > 0 ? Math.round(((total - free) / total) * 1000) / 10 : 0;
+        const threshold = watcher.metricThreshold ?? 90;
+        return {
+          watcherId: watcher.id,
+          status: usedPct > threshold ? 'degraded' : 'healthy',
+          statusCode: 200,
+          latencyMs: Date.now() - started,
+          message: `Disk usage ${usedPct}% on ${targetPath} (threshold ${threshold}%)`,
+          checkedAt,
+        };
+      } catch (err) {
+        return {
+          watcherId: watcher.id,
+          status: 'offline',
+          statusCode: null,
+          latencyMs: Date.now() - started,
+          message: `Disk probe failed: ${(err as Error).message}`,
+          checkedAt,
+        };
+      }
+    }
+
+    if (watcher.method === 'app_logs') {
+      const logPath = watcher.targetUrl.replace(/^(log|file):\/\//i, '');
+      try {
+        if (!fs.existsSync(logPath)) {
+          return {
+            watcherId: watcher.id,
+            status: 'offline',
+            statusCode: null,
+            latencyMs: Date.now() - started,
+            message: `Log file not found: ${logPath}`,
+            checkedAt,
+          };
+        }
+        const content = fs.readFileSync(logPath, 'utf8');
+        const lines = content.split(/\r?\n/).slice(-200);
+        const errCount = lines.filter((l) => /\b(ERROR|FATAL|EXCEPTION|CRITICAL)\b/i.test(l)).length;
+        const threshold = watcher.metricThreshold ?? 5;
+        return {
+          watcherId: watcher.id,
+          status: errCount > threshold ? 'degraded' : 'healthy',
+          statusCode: 200,
+          latencyMs: Date.now() - started,
+          message: `Scanned ${lines.length} log line(s): ${errCount} error(s) (threshold ${threshold})`,
+          checkedAt,
+        };
+      } catch (err) {
+        return {
+          watcherId: watcher.id,
+          status: 'offline',
+          statusCode: null,
+          latencyMs: Date.now() - started,
+          message: `Log inspection failed: ${(err as Error).message}`,
+          checkedAt,
+        };
+      }
+    }
+
+    if (watcher.method === 'postgres' || watcher.method === 'redis' || watcher.method === 'network') {
       const parsed = new URL(watcher.targetUrl);
-      const port = parseInt(parsed.port || (watcher.method === 'postgres' ? '5432' : '6379'), 10);
+      const defaultPort = watcher.method === 'postgres' ? '5432' : watcher.method === 'redis' ? '6379' : '80';
+      const port = parseInt(parsed.port || defaultPort, 10);
       const ok = await this.tcpCheck(parsed.hostname, port, watcher.timeoutMs);
       const latencyMs = Date.now() - started;
       return {
@@ -275,6 +427,17 @@ export class MonitoringEngine {
             };
           }
         }
+      }
+
+      if (latencyMs > watcher.latencyThresholdMs) {
+        return {
+          watcherId: watcher.id,
+          status: 'degraded',
+          statusCode: response.status,
+          latencyMs,
+          message: `Slow endpoint: ${latencyMs}ms exceeded latency threshold ${watcher.latencyThresholdMs}ms`,
+          checkedAt,
+        };
       }
 
       return {
@@ -388,6 +551,75 @@ export class MonitoringEngine {
     tx();
 
     const notifications = getNotificationService();
+    // Phase 15 Incident State Machine:
+    // Observation -> Suspicion -> Verified Incident -> Recommendation -> Approved Action -> Verified Recovery
+    const openIncident = db
+      .prepare(
+        `SELECT * FROM monitoring_incidents
+         WHERE watcher_id = ? AND stage != 'VERIFIED_RECOVERY'
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(watcher.id) as Record<string, unknown> | undefined;
+
+    if (!isHealthy) {
+      const nextStage: IncidentStage = shouldAlert ? 'VERIFIED_INCIDENT' : 'SUSPICION';
+      const severity: 'warning' | 'critical' = result.status === 'offline' ? 'critical' : 'warning';
+      const recommendation =
+        result.status === 'offline'
+          ? `Verify ${watcher.method} process/connectivity at ${watcher.targetUrl} and inspect recent logs.`
+          : `Inspect latency or resource threshold on ${watcher.name} (${result.message}).`;
+
+      if (openIncident) {
+        db.prepare(
+          `UPDATE monitoring_incidents
+           SET stage = ?, severity = ?, summary = ?, recommendation = ?,
+               occurrence_count = occurrence_count + 1, updated_at = datetime('now')
+           WHERE id = ?`
+        ).run(nextStage, severity, result.message, recommendation, String(openIncident.id));
+      } else {
+        db.prepare(
+          `INSERT INTO monitoring_incidents
+           (id, watcher_id, actor_id, project_name, environment, stage, severity, classification, title, summary, recommendation)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          uuidv4(),
+          watcher.id,
+          watcher.actorId,
+          watcher.projectName,
+          watcher.environment,
+          nextStage,
+          severity,
+          watcher.method,
+          `${watcher.name}: ${nextStage === 'VERIFIED_INCIDENT' ? 'Verified Incident' : 'Suspicion'}`,
+          result.message,
+          recommendation
+        );
+      }
+    } else if (openIncident) {
+      db.prepare(
+        `UPDATE monitoring_incidents
+         SET stage = 'VERIFIED_RECOVERY', severity = 'info',
+             summary = ?, resolved_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ?`
+      ).run(`Recovered: ${result.message}`, String(openIncident.id));
+
+      // Cross-phase: record verified recovery observation via approved learning rules
+      try {
+        const { getContinuousLearningEngine } = require('../learning/learningEngine');
+        await getContinuousLearningEngine().ingest({
+          actorId: watcher.actorId,
+          sourceType: 'monitoring_event',
+          sourceRef: `watcher:${watcher.id}`,
+          subject: `Monitoring recovery: ${watcher.name}`,
+          rawContent: `${watcher.targetUrl} recovered after incident (${result.message}).`,
+          projectName: watcher.projectName,
+          declaredQuality: 'VERIFIED_FACT',
+        });
+      } catch {
+        // Never allow learning side-effect to interrupt monitoring
+      }
+    }
+
     if (shouldAlert) {
       await notifications.notify({
         severity: result.status === 'offline' ? 'critical' : 'warning',
@@ -396,6 +628,7 @@ export class MonitoringEngine {
         source: `watcher:${watcher.id}`,
         dedupeKey: `watcher-down:${watcher.id}:${result.status}`,
         dedupeWindowMs: 5 * 60_000,
+        actorId: watcher.actorId,
       });
     } else if (recovered) {
       await notifications.notify({
@@ -405,6 +638,7 @@ export class MonitoringEngine {
         source: `watcher:${watcher.id}`,
         dedupeKey: `watcher-recovered:${watcher.id}`,
         dedupeWindowMs: 60_000,
+        actorId: watcher.actorId,
       });
     }
 
@@ -480,14 +714,131 @@ export class MonitoringEngine {
     return row ? this.mapRow(row) : null;
   }
 
-  async listWatchers(): Promise<WatcherRecord[]> {
+  async listWatchers(actorId?: string, projectName?: string): Promise<WatcherRecord[]> {
     const store = await getMemoryStore();
     const db = store.getDatabase();
     if (!db) return [];
-    const rows = db.prepare(`SELECT * FROM watchers ORDER BY is_default DESC, created_at DESC`).all() as Array<
-      Record<string, unknown>
-    >;
+    let sql = `SELECT * FROM watchers WHERE 1=1`;
+    const args: unknown[] = [];
+    if (actorId) {
+      sql += ` AND actor_id = ?`;
+      args.push(actorId);
+    }
+    if (projectName) {
+      sql += ` AND LOWER(project_name) = LOWER(?)`;
+      args.push(projectName);
+    }
+    sql += ` ORDER BY is_default DESC, created_at DESC`;
+    const rows = db.prepare(sql).all(...args) as Array<Record<string, unknown>>;
     return rows.map((r) => this.mapRow(r));
+  }
+
+  async listIncidents(params: {
+    actorId?: string;
+    projectName?: string;
+    activeOnly?: boolean;
+    limit?: number;
+  } = {}): Promise<MonitoringIncident[]> {
+    const store = await getMemoryStore();
+    const db = store.getDatabase();
+    if (!db) return [];
+    let sql = `SELECT * FROM monitoring_incidents WHERE 1=1`;
+    const args: unknown[] = [];
+    if (params.actorId) {
+      sql += ` AND actor_id = ?`;
+      args.push(params.actorId);
+    }
+    if (params.projectName) {
+      sql += ` AND LOWER(project_name) = LOWER(?)`;
+      args.push(params.projectName);
+    }
+    if (params.activeOnly) {
+      sql += ` AND stage != 'VERIFIED_RECOVERY'`;
+    }
+    sql += ` ORDER BY updated_at DESC LIMIT ?`;
+    args.push(params.limit ?? 50);
+    const rows = db.prepare(sql).all(...args) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: String(r.id),
+      watcherId: String(r.watcher_id),
+      actorId: String(r.actor_id || 'local'),
+      projectName: String(r.project_name || ''),
+      environment: String(r.environment || 'production'),
+      stage: r.stage as IncidentStage,
+      severity: r.severity as MonitoringIncident['severity'],
+      classification: String(r.classification || 'availability'),
+      title: String(r.title),
+      summary: String(r.summary),
+      recommendation: String(r.recommendation || ''),
+      occurrenceCount: Number(r.occurrence_count ?? 1),
+      acknowledged: Number(r.acknowledged) === 1,
+      acknowledgedAt: r.acknowledged_at ? String(r.acknowledged_at) : null,
+      resolvedAt: r.resolved_at ? String(r.resolved_at) : null,
+      createdAt: String(r.created_at),
+      updatedAt: String(r.updated_at),
+    }));
+  }
+
+  async acknowledgeIncident(incidentId: string, actorId = 'local'): Promise<boolean> {
+    const store = await getMemoryStore();
+    const db = store.getDatabase();
+    if (!db) return false;
+    const info = db
+      .prepare(
+        `UPDATE monitoring_incidents
+         SET acknowledged = 1, acknowledged_at = datetime('now'), updated_at = datetime('now')
+         WHERE id = ? AND actor_id = ?`
+      )
+      .run(incidentId, actorId);
+    return info.changes > 0;
+  }
+
+  async approveIncidentAction(incidentId: string, actorId: string, approvedByHuman: boolean): Promise<boolean> {
+    if (!approvedByHuman) {
+      throw new Error('Explicit human approval is required for remediation actions.');
+    }
+    const store = await getMemoryStore();
+    const db = store.getDatabase();
+    if (!db) return false;
+    const info = db
+      .prepare(
+        `UPDATE monitoring_incidents
+         SET stage = 'APPROVED_ACTION', updated_at = datetime('now')
+         WHERE id = ? AND actor_id = ?`
+      )
+      .run(incidentId, actorId);
+    return info.changes > 0;
+  }
+
+  async getSystemHealthOverview(actorId?: string, projectName?: string): Promise<{
+    totalWatchers: number;
+    healthy: number;
+    degraded: number;
+    offline: number;
+    staleCount: number;
+    activeIncidents: number;
+    cpuMemory: { totalMemMb: number; freeMemMb: number; memUsedPct: number; loadAvg1m: number };
+    watchers: WatcherRecord[];
+  }> {
+    const watchers = await this.listWatchers(actorId, projectName);
+    const incidents = await this.listIncidents({ actorId, projectName, activeOnly: true });
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    return {
+      totalWatchers: watchers.length,
+      healthy: watchers.filter((w) => w.health === 'healthy').length,
+      degraded: watchers.filter((w) => w.health === 'degraded').length,
+      offline: watchers.filter((w) => w.health === 'offline').length,
+      staleCount: watchers.filter((w) => w.stale).length,
+      activeIncidents: incidents.length,
+      cpuMemory: {
+        totalMemMb: Math.round(totalMem / (1024 * 1024)),
+        freeMemMb: Math.round(freeMem / (1024 * 1024)),
+        memUsedPct: Math.round(((totalMem - freeMem) / totalMem) * 1000) / 10,
+        loadAvg1m: Math.round((os.loadavg()[0] || 0) * 100) / 100,
+      },
+      watchers,
+    };
   }
 
   async getHistory(watcherId?: string, sinceIso?: string, limit = 50): Promise<Array<Record<string, unknown>>> {
@@ -537,9 +888,22 @@ export class MonitoringEngine {
       lastFailureAt: row.last_failure_at ? String(row.last_failure_at) : null,
       lastError: row.last_error ? String(row.last_error) : null,
       isDefault: Number(row.is_default) === 1,
+      projectName: String(row.project_name || ''),
+      environment: String(row.environment || 'production'),
+      latencyThresholdMs: Number(row.latency_threshold_ms ?? 2_000),
+      actorId: String(row.actor_id || 'local'),
+      stale: this.computeIsStale(row.status as WatcherStatus, row.last_check_at ? String(row.last_check_at) : null, Number(row.interval_ms)),
       workerRunning: this.workers.has(id),
       createdAt: String(row.created_at),
     };
+  }
+
+  private computeIsStale(status: WatcherStatus, lastCheckAt: string | null, intervalMs: number): boolean {
+    if (status !== 'active' || !lastCheckAt) return false;
+    const normalized = lastCheckAt.includes('T') ? lastCheckAt : `${lastCheckAt.replace(' ', 'T')}Z`;
+    const ts = Date.parse(normalized);
+    if (Number.isNaN(ts)) return false;
+    return Date.now() - ts > Math.max(intervalMs * 3, 180_000);
   }
 }
 

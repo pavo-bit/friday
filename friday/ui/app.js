@@ -231,12 +231,56 @@
         name: document.getElementById('watcherName').value,
         targetUrl: document.getElementById('watcherUrl').value,
         method: document.getElementById('watcherMethod').value,
+        projectName: document.getElementById('watcherProject')?.value || '',
         intervalMs: parseInt(document.getElementById('watcherInterval').value || '60', 10) * 1000,
       }),
     });
     e.target.reset();
     loadWatchers();
   });
+
+  async function loadMonitoringOverviewAndIncidents() {
+    try {
+      const [overview, { incidents }] = await Promise.all([
+        api('/friday/monitoring/overview'),
+        api('/friday/monitoring/incidents'),
+      ]);
+      const hEl = document.getElementById('monHealthy');
+      const dEl = document.getElementById('monDegraded');
+      const iEl = document.getElementById('monIncidentsCount');
+      const cEl = document.getElementById('monCpuRam');
+      if (hEl) hEl.textContent = String(overview.healthy ?? 0);
+      if (dEl) dEl.textContent = String((overview.degraded ?? 0) + (overview.offline ?? 0));
+      if (iEl) iEl.textContent = String(overview.activeIncidents ?? 0);
+      if (cEl && overview.cpuMemory) {
+        cEl.textContent = `${overview.cpuMemory.memUsedPct}% RAM`;
+      }
+      const incList = document.getElementById('incidentsList');
+      if (incList) {
+        incList.innerHTML = incidents.length
+          ? incidents
+              .map(
+                (inc) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-item-title">${inc.title} <span class="pill ${inc.stage === 'VERIFIED_RECOVERY' ? 'healthy' : inc.severity}">${inc.stage}</span></div>
+                  <div class="list-item-sub">${inc.projectName ? `[${inc.projectName}] ` : ''}${inc.summary} (x${inc.occurrenceCount})</div>
+                </div>
+                ${!inc.acknowledged ? `<button class="btn-sm" onclick="window.__ackIncident('${inc.id}')">Ack</button>` : ''}
+              </div>`
+              )
+              .join('')
+          : '<div class="hint">No incidents recorded.</div>';
+      }
+    } catch {
+      // Ignore transient errors
+    }
+  }
+  window.__ackIncident = async (id) => {
+    await api(`/friday/monitoring/incidents/${id}/acknowledge`, { method: 'POST', body: JSON.stringify({}) });
+    loadMonitoringOverviewAndIncidents();
+  };
+  loadMonitoringOverviewAndIncidents();
   document.getElementById('refreshWatchersBtn').addEventListener('click', loadWatchers);
 
   async function loadReminders() {
@@ -428,11 +472,13 @@
 
   async function loadIdentityAndLearning() {
     try {
-      const [idBundle, projData, recData, procData] = await Promise.all([
+      const [idBundle, projData, recData, procData, contraData, staleData] = await Promise.all([
         api('/friday/identity'),
         api('/friday/identity/projects'),
         api('/friday/learning/records?limit=12'),
         api('/friday/learning/procedures'),
+        api('/friday/learning/contradictions'),
+        api('/friday/learning/stale'),
       ]);
 
       const prof = idBundle.profile;
@@ -510,6 +556,43 @@
               .join('')
           : '<div class="hint">No proposed procedures yet.</div>';
       }
+
+      const contraList = document.getElementById('learningContradictionsList');
+      if (contraList) {
+        const contras = contraData?.contradictions || [];
+        contraList.innerHTML = contras.length
+          ? contras
+              .map(
+                (c) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-item-title">${c.conflictingSourceType} <span class="pill ${c.status === 'OPEN' ? 'warning' : 'healthy'}">${c.status}</span></div>
+                  <div class="list-item-sub">${c.conflictingContent}</div>
+                </div>
+                ${c.status === 'OPEN' ? `<div class="item-actions"><button class="btn-sm" onclick="window.__resolveContra('${c.id}', 'KEEP_EXISTING')">Keep</button><button class="btn-sm" onclick="window.__resolveContra('${c.id}', 'USE_NEW')">Use New</button></div>` : ''}
+              </div>`
+              )
+              .join('')
+          : '<div class="hint">No knowledge contradictions detected.</div>';
+      }
+
+      const staleList = document.getElementById('learningStaleList');
+      if (staleList) {
+        const stale = staleData?.records || [];
+        staleList.innerHTML = stale.length
+          ? stale
+              .map(
+                (s) => `
+              <div class="list-item">
+                <div>
+                  <div class="list-item-title">${s.subject} <span class="pill warning">OUTDATED</span></div>
+                  <div class="list-item-sub">${s.content}</div>
+                </div>
+              </div>`
+              )
+              .join('')
+          : '<div class="hint">No stale knowledge records.</div>';
+      }
     } catch {
       // Ignore if identity/learning endpoints are not yet ready
     }
@@ -527,6 +610,14 @@
     await api(`/friday/learning/procedures/${id}/approve`, {
       method: 'POST',
       body: JSON.stringify({ approvedByHuman: true }),
+    });
+    loadIdentityAndLearning();
+  };
+
+  window.__resolveContra = async (id, resolution) => {
+    await api(`/friday/learning/contradictions/${id}/resolve`, {
+      method: 'POST',
+      body: JSON.stringify({ resolution }),
     });
     loadIdentityAndLearning();
   };
@@ -584,6 +675,95 @@
   if (refreshLearnBtn) {
     refreshLearnBtn.addEventListener('click', loadIdentityAndLearning);
   }
+
+  // ---- Web Research UI (Phase 14) ----
+  async function loadResearchJobs() {
+    try {
+      const { jobs } = await api('/friday/research/jobs?limit=15');
+      const list = document.getElementById('researchJobsList');
+      if (!list) return;
+      list.innerHTML = jobs.length
+        ? jobs
+            .map(
+              (j) => `
+            <div class="list-item">
+              <div>
+                <div class="list-item-title">${j.query} <span class="pill ${j.status === 'COMPLETED' ? 'healthy' : j.status === 'FAILED' ? 'critical' : 'active'}">${j.status}</span></div>
+                <div class="list-item-sub">${(j.urls || []).join(', ')} · ${j.pagesVisited} page(s) · ${(j.failedPages || []).length} failed</div>
+              </div>
+              <div class="item-actions">
+                <button class="btn-sm" onclick="window.__viewResearch('${j.id}')">View</button>
+                ${j.status === 'RUNNING' ? `<button class="btn-sm" onclick="window.__cancelResearch('${j.id}')">Cancel</button>` : ''}
+              </div>
+            </div>`
+            )
+            .join('')
+        : '<div class="hint">No web research jobs yet.</div>';
+    } catch {
+      // Ignore transient errors
+    }
+  }
+
+  window.__viewResearch = async (id) => {
+    const { job } = await api(`/friday/research/jobs/${id}`);
+    const viewer = document.getElementById('researchReportViewer');
+    if (!viewer || !job) return;
+    const report = job.report;
+    if (!report) {
+      viewer.textContent = `Job ${job.id} (${job.status})${job.error ? `\nError: ${job.error}` : ''}`;
+      return;
+    }
+    const findingsText = (report.allFindings || [])
+      .slice(0, 15)
+      .map((f) => `- [${f.evidenceType}] (${f.validationStatus}, ${Math.round(f.confidence * 100)}%) ${f.observation} — ${f.sourceUrl}`)
+      .join('\n');
+    const failedText = (report.failedPages || [])
+      .map((fp) => `- ${fp.url}: ${fp.reason}`)
+      .join('\n');
+    viewer.textContent = [
+      report.summary,
+      '',
+      `Findings (${(report.allFindings || []).length}):`,
+      findingsText || 'None',
+      ...(failedText ? ['', `Failed Pages (${report.failedPages.length}):`, failedText] : []),
+    ].join('\n');
+  };
+
+  window.__cancelResearch = async (id) => {
+    await api(`/friday/research/jobs/${id}/cancel`, { method: 'POST' });
+    loadResearchJobs();
+  };
+
+  const researchForm = document.getElementById('researchForm');
+  if (researchForm) {
+    researchForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const rawUrls = document.getElementById('researchUrlsInput').value
+        .split(',')
+        .map((u) => u.trim())
+        .filter(Boolean);
+      const query = document.getElementById('researchQueryInput').value.trim();
+      const maxDepth = parseInt(document.getElementById('researchDepthInput').value || '1', 10);
+      if (rawUrls.length >= 2) {
+        await api('/friday/research/compare', {
+          method: 'POST',
+          body: JSON.stringify({ urls: rawUrls, query, maxDepth }),
+        });
+      } else if (rawUrls.length === 1) {
+        await api('/friday/research/analyze', {
+          method: 'POST',
+          body: JSON.stringify({ url: rawUrls[0], query, maxDepth }),
+        });
+      }
+      researchForm.reset();
+      loadResearchJobs();
+    });
+  }
+  const refreshResearchBtn = document.getElementById('refreshResearchBtn');
+  if (refreshResearchBtn) {
+    refreshResearchBtn.addEventListener('click', loadResearchJobs);
+  }
+  loadResearchJobs();
 
   window.__revokeDevice = async (id) => { await api(`/friday/auth/devices/${id}`, { method: 'DELETE' }); loadSettings(); };
 

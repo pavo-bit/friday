@@ -36,6 +36,7 @@ export interface LearningIngestInput {
   declaredQuality?: SourceQuality;
   explicitKind?: LearningKind;
   approvedSource?: boolean;
+  evidence?: string[];
   expiresAt?: string;
 }
 
@@ -51,10 +52,37 @@ export interface LearningRecord {
   projectName: string;
   confidence: number;
   verified: boolean;
+  approvedByUser: boolean;
+  evidence: string[];
+  version: number;
   untrustedSanitized: boolean;
   expiresAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface LearningContradictionRecord {
+  id: string;
+  actorId: string;
+  existingRecordId: string;
+  conflictingContent: string;
+  conflictingSourceType: string;
+  conflictingSourceRef: string;
+  projectName: string;
+  status: 'OPEN' | 'RESOLVED_KEEP_EXISTING' | 'RESOLVED_USE_NEW';
+  createdAt: string;
+  resolvedAt: string | null;
+}
+
+export interface LearningVersionRecord {
+  id: string;
+  recordId: string;
+  actorId: string;
+  version: number;
+  previousContent: string;
+  newContent: string;
+  reason: string;
+  changedAt: string;
 }
 
 export interface LearnedProcedureRecord {
@@ -63,9 +91,23 @@ export interface LearnedProcedureRecord {
   name: string;
   description: string;
   steps: string[];
+  sourceRef: string;
+  scope: string;
+  requiredPermissions: string[];
+  version: number;
   requiresApproval: boolean;
   approvedByUser: boolean;
   approvedAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface ProcedureExecutionRecord {
+  id: string;
+  procedureId: string;
+  actorId: string;
+  authorized: boolean;
+  status: 'BLOCKED' | 'COMPLETED' | 'FAILED';
+  output: string;
+  executedAt: string;
 }

@@ -845,6 +845,25 @@ export class AssistantBrain {
       return { tool: 'get_system_status', args: {} };
     }
 
+    // Web Research & Multi-Website Comparison (Phase 14)
+    const urlsInText = Array.from(text.matchAll(/https?:\/\/[^\s,)]+/gi)).map((m) => m[0]);
+    if (urlsInText.length >= 2 && /\b(compare|versus|vs|difference)\b/i.test(lower)) {
+      return {
+        tool: 'compare_websites',
+        args: { urls: urlsInText, query: text },
+      };
+    }
+    if (
+      urlsInText.length === 1 &&
+      /\b(analy[sz]e|inspect|research|report|services|pricing|technical\s+report|website|company)\b/i.test(lower) &&
+      !/\b(watch|monitor)\b/i.test(lower)
+    ) {
+      return {
+        tool: 'analyze_website',
+        args: { url: urlsInText[0], query: text },
+      };
+    }
+
     // Dashboard / Server monitoring commands
     if (/\b(pause)\b.*\b(monitor|monitoring|watch|watcher|dashboard)\b/i.test(lower)) {
       return { tool: 'pause_dashboard_watch', args: {} };

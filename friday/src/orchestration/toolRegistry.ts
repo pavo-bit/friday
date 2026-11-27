@@ -27,6 +27,7 @@ export type CapabilityCategory =
   | 'files'
   | 'developer'
   | 'web'
+  | 'research'
   | 'companion'
   | 'general';
 
@@ -1236,6 +1237,10 @@ export class CapabilityRegistry {
     // Register Trading Copilot capabilities (Phase 7)
     const { registerTradingCapabilities } = require('../trading/tradingCapabilities');
     registerTradingCapabilities(this);
+
+    // Register Web Research capabilities (Phase 14)
+    const { registerResearchCapabilities } = require('../research/researchCapabilities');
+    registerResearchCapabilities(this);
   }
 }
 

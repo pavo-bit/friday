@@ -692,6 +692,187 @@ export const MIGRATIONS: Migration[] = [
       );
     `,
   },
+  {
+    version: 11,
+    name: 'web_research_and_browser_intelligence',
+    sql: `
+      CREATE TABLE IF NOT EXISTS research_jobs (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL DEFAULT 'default',
+        query TEXT NOT NULL,
+        urls_json TEXT NOT NULL DEFAULT '[]',
+        status TEXT NOT NULL CHECK(status IN ('QUEUED', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED')),
+        max_depth INTEGER NOT NULL DEFAULT 1,
+        max_pages INTEGER NOT NULL DEFAULT 5,
+        pages_visited INTEGER NOT NULL DEFAULT 0,
+        failed_pages_json TEXT NOT NULL DEFAULT '[]',
+        report_json TEXT,
+        error TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_research_jobs_actor ON research_jobs(actor_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS research_findings (
+        id TEXT PRIMARY KEY,
+        job_id TEXT NOT NULL REFERENCES research_jobs(id) ON DELETE CASCADE,
+        actor_id TEXT NOT NULL,
+        source_url TEXT NOT NULL,
+        page_title TEXT NOT NULL DEFAULT '',
+        evidence_type TEXT NOT NULL,
+        observation TEXT NOT NULL,
+        confidence REAL NOT NULL DEFAULT 0.7,
+        validation_status TEXT NOT NULL CHECK(validation_status IN ('OBSERVED', 'CORROBORATED', 'UNVERIFIED', 'QUARANTINED')),
+        observed_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_research_findings_job ON research_findings(job_id, actor_id);
+    `,
+  },
+  {
+    version: 12,
+    name: 'advanced_monitoring_and_incidents',
+    sql: `
+      CREATE TABLE watchers_v12 (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        target_url TEXT NOT NULL,
+        method TEXT NOT NULL DEFAULT 'http_health' CHECK(method IN ('http_health', 'prometheus', 'grafana', 'json_api', 'postgres', 'redis', 'cpu_memory', 'disk_usage', 'network', 'app_logs')),
+        interval_ms INTEGER NOT NULL DEFAULT 60000,
+        timeout_ms INTEGER NOT NULL DEFAULT 5000,
+        failure_threshold INTEGER NOT NULL DEFAULT 2,
+        metric_query TEXT DEFAULT '',
+        metric_threshold REAL,
+        status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'paused', 'stopped')),
+        health TEXT NOT NULL DEFAULT 'unknown' CHECK(health IN ('healthy', 'degraded', 'offline', 'unknown')),
+        consecutive_failures INTEGER NOT NULL DEFAULT 0,
+        last_check_at TEXT,
+        last_success_at TEXT,
+        last_failure_at TEXT,
+        last_error TEXT,
+        is_default INTEGER NOT NULL DEFAULT 0,
+        project_name TEXT DEFAULT '',
+        environment TEXT DEFAULT 'production',
+        latency_threshold_ms INTEGER DEFAULT 2000,
+        actor_id TEXT DEFAULT 'local',
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO watchers_v12 (
+        id, name, target_url, method, interval_ms, timeout_ms, failure_threshold,
+        metric_query, metric_threshold, status, health, consecutive_failures,
+        last_check_at, last_success_at, last_failure_at, last_error, is_default,
+        created_at, updated_at
+      )
+      SELECT
+        id, name, target_url, method, interval_ms, timeout_ms, failure_threshold,
+        metric_query, metric_threshold, status, health, consecutive_failures,
+        last_check_at, last_success_at, last_failure_at, last_error, is_default,
+        created_at, updated_at
+      FROM watchers;
+      DROP TABLE watchers;
+      ALTER TABLE watchers_v12 RENAME TO watchers;
+      CREATE INDEX IF NOT EXISTS idx_watchers_status ON watchers(status);
+      CREATE INDEX IF NOT EXISTS idx_watchers_actor_proj ON watchers(actor_id, project_name);
+
+      CREATE TABLE IF NOT EXISTS monitoring_incidents (
+        id TEXT PRIMARY KEY,
+        watcher_id TEXT NOT NULL REFERENCES watchers(id) ON DELETE CASCADE,
+        actor_id TEXT NOT NULL DEFAULT 'local',
+        project_name TEXT DEFAULT '',
+        environment TEXT DEFAULT 'production',
+        stage TEXT NOT NULL CHECK(stage IN ('OBSERVATION', 'SUSPICION', 'VERIFIED_INCIDENT', 'RECOMMENDATION', 'APPROVED_ACTION', 'VERIFIED_RECOVERY')),
+        severity TEXT NOT NULL CHECK(severity IN ('info', 'warning', 'critical')),
+        classification TEXT NOT NULL DEFAULT 'availability',
+        title TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        recommendation TEXT DEFAULT '',
+        occurrence_count INTEGER NOT NULL DEFAULT 1,
+        acknowledged INTEGER NOT NULL DEFAULT 0,
+        acknowledged_at TEXT,
+        resolved_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_mon_incidents_actor_proj ON monitoring_incidents(actor_id, project_name, stage);
+
+      CREATE TABLE IF NOT EXISTS notification_preferences (
+        actor_id TEXT PRIMARY KEY,
+        quiet_hours_start TEXT DEFAULT '',
+        quiet_hours_end TEXT DEFAULT '',
+        min_severity TEXT NOT NULL DEFAULT 'info' CHECK(min_severity IN ('info', 'warning', 'critical')),
+        allow_critical_in_quiet_hours INTEGER NOT NULL DEFAULT 1,
+        approved_destinations_json TEXT NOT NULL DEFAULT '["dashboard"]',
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS notification_deliveries (
+        id TEXT PRIMARY KEY,
+        notification_id TEXT NOT NULL REFERENCES notifications(id) ON DELETE CASCADE,
+        destination TEXT NOT NULL DEFAULT 'dashboard',
+        status TEXT NOT NULL CHECK(status IN ('DELIVERED', 'SUPPRESSED_QUIET_HOURS', 'FAILED', 'RETRYING')),
+        attempts INTEGER NOT NULL DEFAULT 1,
+        last_error TEXT,
+        acknowledged INTEGER NOT NULL DEFAULT 0,
+        acknowledged_at TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_notif_deliveries_notif ON notification_deliveries(notification_id);
+    `,
+  },
+  {
+    version: 13,
+    name: 'continuous_learning_knowledge_intelligence',
+    sql: `
+      ALTER TABLE learning_records ADD COLUMN approved_by_user INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE learning_records ADD COLUMN evidence_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE learning_records ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE IF NOT EXISTS learning_contradictions (
+        id TEXT PRIMARY KEY,
+        actor_id TEXT NOT NULL,
+        existing_record_id TEXT NOT NULL REFERENCES learning_records(id) ON DELETE CASCADE,
+        conflicting_content TEXT NOT NULL,
+        conflicting_source_type TEXT NOT NULL,
+        conflicting_source_ref TEXT NOT NULL DEFAULT '',
+        project_name TEXT DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN', 'RESOLVED_KEEP_EXISTING', 'RESOLVED_USE_NEW')),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        resolved_at TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_learn_contra_actor ON learning_contradictions(actor_id, status);
+
+      CREATE TABLE IF NOT EXISTS learning_versions (
+        id TEXT PRIMARY KEY,
+        record_id TEXT NOT NULL REFERENCES learning_records(id) ON DELETE CASCADE,
+        actor_id TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        previous_content TEXT NOT NULL,
+        new_content TEXT NOT NULL,
+        reason TEXT NOT NULL DEFAULT '',
+        changed_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_learn_ver_record ON learning_versions(record_id, actor_id);
+
+      ALTER TABLE learned_procedures ADD COLUMN source_ref TEXT DEFAULT 'workflow';
+      ALTER TABLE learned_procedures ADD COLUMN scope TEXT DEFAULT 'actor';
+      ALTER TABLE learned_procedures ADD COLUMN required_permissions_json TEXT DEFAULT '[]';
+      ALTER TABLE learned_procedures ADD COLUMN version INTEGER NOT NULL DEFAULT 1;
+
+      CREATE TABLE IF NOT EXISTS procedure_executions (
+        id TEXT PRIMARY KEY,
+        procedure_id TEXT NOT NULL REFERENCES learned_procedures(id) ON DELETE CASCADE,
+        actor_id TEXT NOT NULL,
+        authorized INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL CHECK(status IN ('BLOCKED', 'COMPLETED', 'FAILED')),
+        output TEXT NOT NULL DEFAULT '',
+        executed_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_proc_exec_actor ON procedure_executions(procedure_id, actor_id);
+    `,
+  },
 ];
 
 /**

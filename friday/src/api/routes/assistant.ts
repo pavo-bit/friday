@@ -18,10 +18,48 @@ import { getConfig } from '../../shared/config';
 
 export const assistantRoutes = Router();
 
-// ---- Watchers (Phase 4) ----
-assistantRoutes.get('/watchers', async (_req: Request, res: Response) => {
-  const list = await getMonitoringEngine().listWatchers();
+// ---- Watchers & Advanced Monitoring (Phase 4 / Phase 15) ----
+assistantRoutes.get('/watchers', async (req: Request, res: Response) => {
+  const actorId = req.query.actorId as string | undefined;
+  const projectName = req.query.projectName as string | undefined;
+  const list = await getMonitoringEngine().listWatchers(actorId, projectName);
   res.json({ watchers: list });
+});
+
+assistantRoutes.get('/monitoring/overview', async (req: Request, res: Response) => {
+  const actorId = req.query.actorId as string | undefined;
+  const projectName = req.query.projectName as string | undefined;
+  const overview = await getMonitoringEngine().getSystemHealthOverview(actorId, projectName);
+  res.json(overview);
+});
+
+assistantRoutes.get('/monitoring/incidents', async (req: Request, res: Response) => {
+  const actorId = req.query.actorId as string | undefined;
+  const projectName = req.query.projectName as string | undefined;
+  const activeOnly = req.query.activeOnly === 'true';
+  const incidents = await getMonitoringEngine().listIncidents({ actorId, projectName, activeOnly });
+  res.json({ incidents });
+});
+
+assistantRoutes.post('/monitoring/incidents/:id/acknowledge', async (req: Request, res: Response) => {
+  const actorId = (req.body?.actorId as string) || 'local';
+  const ok = await getMonitoringEngine().acknowledgeIncident(String(req.params.id), actorId);
+  res.status(ok ? 200 : 404).json({ acknowledged: ok });
+});
+
+assistantRoutes.post('/monitoring/incidents/:id/approve-action', async (req: Request, res: Response) => {
+  try {
+    const actorId = (req.body?.actorId as string) || 'local';
+    const approvedByHuman = Boolean(req.body?.approvedByHuman);
+    const ok = await getMonitoringEngine().approveIncidentAction(
+      String(req.params.id),
+      actorId,
+      approvedByHuman
+    );
+    res.status(ok ? 200 : 404).json({ approved: ok });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
 });
 
 assistantRoutes.get('/watchers/history', async (req: Request, res: Response) => {
@@ -44,6 +82,10 @@ assistantRoutes.post('/watchers', async (req: Request, res: Response) => {
       metricQuery?: string;
       metricThreshold?: number;
       isDefault?: boolean;
+      projectName?: string;
+      environment?: string;
+      latencyThresholdMs?: number;
+      actorId?: string;
     };
     if (!body.targetUrl) {
       res.status(400).json({ error: 'targetUrl is required' });
@@ -59,6 +101,10 @@ assistantRoutes.post('/watchers', async (req: Request, res: Response) => {
       metricQuery: body.metricQuery,
       metricThreshold: body.metricThreshold,
       isDefault: body.isDefault,
+      projectName: body.projectName,
+      environment: body.environment,
+      latencyThresholdMs: body.latencyThresholdMs,
+      actorId: body.actorId,
     });
     res.status(201).json({ watcher });
   } catch (err) {
@@ -149,6 +195,30 @@ assistantRoutes.get('/notifications', async (req: Request, res: Response) => {
 assistantRoutes.post('/notifications/:id/read', async (req: Request, res: Response) => {
   const ok = await getNotificationService().markRead(String(req.params.id));
   res.status(ok ? 200 : 404).json({ read: ok });
+});
+
+assistantRoutes.post('/notifications/:id/acknowledge', async (req: Request, res: Response) => {
+  const ok = await getNotificationService().acknowledgeDelivery(String(req.params.id));
+  res.status(ok ? 200 : 404).json({ acknowledged: ok });
+});
+
+assistantRoutes.get('/notifications/deliveries', async (req: Request, res: Response) => {
+  const limit = parseInt((req.query.limit as string) || '50', 10);
+  const deliveries = await getNotificationService().listDeliveries(limit);
+  res.json({ deliveries });
+});
+
+assistantRoutes.get('/notifications/preferences', async (req: Request, res: Response) => {
+  const actorId = (req.query.actorId as string) || 'local';
+  const preferences = await getNotificationService().getPreferences(actorId);
+  res.json({ preferences });
+});
+
+assistantRoutes.put('/notifications/preferences', async (req: Request, res: Response) => {
+  const body = (req.body || {}) as Record<string, unknown>;
+  const actorId = (body.actorId as string) || 'local';
+  const preferences = await getNotificationService().savePreferences(actorId, body);
+  res.json({ preferences });
 });
 
 assistantRoutes.post('/notifications/read-all', async (_req: Request, res: Response) => {

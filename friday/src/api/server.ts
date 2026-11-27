@@ -24,6 +24,7 @@ import { tradingRoutes } from './routes/trading';
 import { voiceRoutes } from './routes/voice';
 import { identityRoutes } from './routes/identity';
 import { learningRoutes } from './routes/learning';
+import { researchRoutes } from './routes/research';
 import { getAuthService } from '../services/authService';
 
 const log = createLayerLogger('API');
@@ -146,6 +147,7 @@ export class FridayServer {
     this.app.use('/friday', healthRoutes);
     this.app.use('/friday/identity', identityRoutes);
     this.app.use('/friday/learning', learningRoutes);
+    this.app.use('/friday/research', researchRoutes);
     this.app.use('/friday', assistantRoutes);
 
     // Fallback — serve the dashboard

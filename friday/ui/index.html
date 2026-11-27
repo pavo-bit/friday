@@ -24,6 +24,7 @@
         <button class="nav-btn active" data-tab="command">Command Center</button>
         <button class="nav-btn" data-tab="finance">Financial Intelligence</button>
         <button class="nav-btn" data-tab="trading">Trading Copilot</button>
+        <button class="nav-btn" data-tab="research">Web Research</button>
         <button class="nav-btn" data-tab="monitoring">Monitoring <span class="badge" id="navWatcherCount">0</span></button>
         <button class="nav-btn" data-tab="reminders">Reminders <span class="badge" id="navReminderCount">0</span></button>
         <button class="nav-btn" data-tab="notifications">Notifications <span class="badge warn" id="navNotifCount">0</span></button>
@@ -289,15 +290,54 @@
         </div>
       </section>
 
+      <!-- TAB: WEB RESEARCH (PHASE 14) -->
+      <section class="tab-panel" id="tab-research">
+        <div class="card">
+          <div class="card-header">
+            <h2>Web Research &amp; Website Intelligence</h2>
+          </div>
+          <form class="form-row" id="researchForm">
+            <input type="text" id="researchUrlsInput" placeholder="Enter URL(s), comma-separated for comparison" required style="flex:2;">
+            <input type="text" id="researchQueryInput" placeholder="Research focus (e.g. pricing & tech stack)" style="flex:1;">
+            <input type="number" id="researchDepthInput" value="1" min="0" max="3" style="width:70px;" title="Crawl Depth">
+            <button type="submit" class="btn-primary">Run Research</button>
+          </form>
+        </div>
+
+        <div class="two-col">
+          <div class="card">
+            <div class="card-header">
+              <h2>Research Jobs &amp; History</h2>
+              <button class="btn-sm" id="refreshResearchBtn" type="button">Refresh</button>
+            </div>
+            <div id="researchJobsList" class="list-container"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Research Report &amp; Evidence</h2>
+            </div>
+            <div id="researchReportViewer" class="info-box" style="white-space:pre-wrap; font-size:13px; max-height:420px; overflow-y:auto;">Select a research job to inspect findings, confidence, and failed pages.</div>
+          </div>
+        </div>
+      </section>
+
       <!-- TAB: MONITORING -->
       <section class="tab-panel" id="tab-monitoring">
+        <div class="stats-grid" id="monitoringOverviewGrid">
+          <div class="card stat-card"><div class="stat-label">Healthy</div><div class="stat-value" id="monHealthy">0</div></div>
+          <div class="card stat-card"><div class="stat-label">Degraded / Offline</div><div class="stat-value" id="monDegraded">0</div></div>
+          <div class="card stat-card"><div class="stat-label">Active Incidents</div><div class="stat-value" id="monIncidentsCount">0</div></div>
+          <div class="card stat-card"><div class="stat-label">Host CPU / RAM</div><div class="stat-value" id="monCpuRam">--</div></div>
+        </div>
+
         <div class="card">
           <div class="card-header">
             <h2>Add Dashboard / Service Watcher</h2>
           </div>
           <form class="form-row" id="watcherForm">
             <input type="text" id="watcherName" placeholder="Name (e.g. ERP Dashboard)" required>
-            <input type="url" id="watcherUrl" placeholder="http://127.0.0.1:3141/friday/health" required>
+            <input type="text" id="watcherUrl" placeholder="http://127.0.0.1:3141/friday/health or system://local" required>
             <select id="watcherMethod">
               <option value="http_health">HTTP Health</option>
               <option value="prometheus">Prometheus</option>
@@ -305,18 +345,32 @@
               <option value="json_api">JSON API</option>
               <option value="postgres">PostgreSQL</option>
               <option value="redis">Redis</option>
+              <option value="cpu_memory">CPU &amp; Memory</option>
+              <option value="disk_usage">Disk Usage</option>
+              <option value="network">Network TCP</option>
+              <option value="app_logs">Application Logs</option>
             </select>
+            <input type="text" id="watcherProject" placeholder="Project (optional)">
             <input type="number" id="watcherInterval" value="60" min="5" placeholder="Interval (sec)">
             <button type="submit" class="btn-primary">Start Watch</button>
           </form>
         </div>
 
-        <div class="card">
-          <div class="card-header">
-            <h2>Active Watchers</h2>
-            <button class="btn-sm" id="refreshWatchersBtn">Refresh</button>
+        <div class="two-col">
+          <div class="card">
+            <div class="card-header">
+              <h2>Active Watchers</h2>
+              <button class="btn-sm" id="refreshWatchersBtn">Refresh</button>
+            </div>
+            <div id="watchersList" class="list-container"></div>
           </div>
-          <div id="watchersList" class="list-container"></div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Incidents &amp; Recovery History</h2>
+            </div>
+            <div id="incidentsList" class="list-container"></div>
+          </div>
         </div>
 
         <div class="card">
@@ -625,6 +679,22 @@ Loading voice health diagnostics...
               <h2>Learned Procedures (Approval-Governed)</h2>
             </div>
             <div id="learnedProceduresList" class="list-container"></div>
+          </div>
+        </div>
+
+        <div class="two-col" style="margin-top: 16px;">
+          <div class="card">
+            <div class="card-header">
+              <h2>Knowledge Contradictions</h2>
+            </div>
+            <div id="learningContradictionsList" class="list-container"></div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <h2>Stale / Outdated Knowledge</h2>
+            </div>
+            <div id="learningStaleList" class="list-container"></div>
           </div>
         </div>
 
