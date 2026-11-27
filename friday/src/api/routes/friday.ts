@@ -14,6 +14,7 @@ import { getTts } from '../../voice/tts';
 import { TaskResult } from '../../shared/types';
 import { toStructuredIntent } from '../../intelligence/systemPrompt';
 import { getAssistantBrain } from '../../orchestration/assistantBrain';
+import { InteractionChannel } from '../../personality/personalityTypes';
 import { resolveCallerIdentity } from '../authContext';
 
 const log = createLayerLogger('Routes');
@@ -28,7 +29,12 @@ export const fridayRoutes = Router();
  * and routes to the appropriate executor.
  */
 fridayRoutes.post('/run', async (req: Request, res: Response) => {
-  const { text, sessionId, approved } = req.body as { text?: string; sessionId?: string; approved?: boolean };
+  const { text, sessionId, approved, channel } = req.body as {
+    text?: string;
+    sessionId?: string;
+    approved?: boolean;
+    channel?: InteractionChannel;
+  };
 
   if (!text || typeof text !== 'string') {
     res.status(400).json({ error: 'Missing "text" field in request body' });
@@ -46,7 +52,9 @@ fridayRoutes.post('/run', async (req: Request, res: Response) => {
       res.status(401).json({ error: 'Unauthorized: valid bearer token required' });
       return;
     }
-    const result = await processTextInput(text, sessionId, Boolean(approved), identity.actorId);
+    const validChannel: InteractionChannel =
+      channel === 'voice' || channel === 'desktop' || channel === 'android' ? channel : 'text';
+    const result = await processTextInput(text, sessionId, Boolean(approved), identity.actorId, validChannel);
     res.json(result);
   } catch (error) {
     log.error('Error processing request', { error: (error as Error).message });
@@ -170,7 +178,8 @@ export async function processTextInput(
   text: string,
   sessionId?: string,
   approvedHighRisk = false,
-  actorId = 'local'
+  actorId = 'local',
+  channel: InteractionChannel = 'text'
 ): Promise<TaskResult & { intent?: unknown; toolResult?: unknown }> {
-  return getAssistantBrain().process(text, sessionId, approvedHighRisk, { actorId });
+  return getAssistantBrain().process(text, sessionId, approvedHighRisk, { actorId, channel });
 }

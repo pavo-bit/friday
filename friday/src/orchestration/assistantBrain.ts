@@ -7,6 +7,9 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getMemoryStore } from '../memory/store';
 import { getPersonalityEngine } from '../intelligence/personality';
+import { getAdaptivePersonalityEngine } from '../personality/personalityEngine';
+import { selectResponseDepth } from '../personality/responseDepth';
+import { InteractionChannel, PersonalityMetadata } from '../personality/personalityTypes';
 import { getOllamaClient, OllamaChatMessage } from './ollamaClient';
 import { getToolRegistry, ToolExecutionResult } from './toolRegistry';
 import { getCapabilityDiscoveryEngine } from './capabilityDiscovery';
@@ -41,6 +44,7 @@ export type ExecutiveDecision =
 export interface AssistantProcessOptions {
   actorId?: string;
   grantedPermissions?: readonly string[];
+  channel?: InteractionChannel;
 }
 
 export interface AssistantProcessResponse extends TaskResult {
@@ -50,6 +54,7 @@ export interface AssistantProcessResponse extends TaskResult {
   executiveDecision?: ExecutiveDecision;
   assistantRequest?: AssistantRequest;
   clarificationNeeded?: string;
+  personalityMeta?: PersonalityMetadata;
   timingsMs?: {
     understanding: number;
     context: number;
@@ -78,11 +83,12 @@ export class AssistantBrain {
     const registry = getToolRegistry();
     const actorId = options?.actorId || 'local';
     const conversationId = sessionId || 'default';
+    const channel: InteractionChannel = options?.channel || 'text';
     let effectiveText = text.trim();
 
     const memoryPolicy = shouldPersistConversationToMemory(effectiveText);
     if (memoryPolicy.allow) {
-      store.logConversation('user', effectiveText, undefined, sessionId);
+      store.logConversation('user', effectiveText, undefined, sessionId, actorId, channel);
     }
 
     // 0. Persistent Clarification resumption (clarification NEVER grants approval/permission)
@@ -249,6 +255,61 @@ export class AssistantBrain {
     const boundedCtx = await ctxEngine.resolve(understood);
     const contextMs = Date.now() - tCtxStart;
 
+    // 4.5. Adaptive Personality & Response Depth Selection (Phase 13)
+    const adaptiveEngine = getAdaptivePersonalityEngine();
+    if (understood.persistOverride) {
+      store.saveDigitalIdentitySettings(actorId, {
+        ...(understood.explicitPersonalityOverride
+          ? { defaultPersonality: understood.explicitPersonalityOverride }
+          : {}),
+        ...(understood.explicitDepthOverride
+          ? { answerDetail: understood.explicitDepthOverride }
+          : {}),
+      });
+    }
+    const identitySettings = store.getDigitalIdentitySettings(actorId);
+    const convState = store.getConversationContextState(actorId, conversationId);
+
+    const personalitySelection = adaptiveEngine.selectPersonality({
+      rawInput: effectiveText,
+      category: understood.conversationalCategory,
+      complexity: understood.complexity,
+      intentConfidence: understood.confidence,
+      settings: identitySettings,
+      explicitOverride: understood.explicitPersonalityOverride,
+      temporarySessionProfile: convState.temporaryPersonality,
+      hasActiveProjectContext: boundedCtx.categorizedMemories.projects.length > 0,
+      isReturningTopic: boundedCtx.isReturningTopic,
+    });
+
+    const depthSelection = selectResponseDepth({
+      rawInput: effectiveText,
+      category: understood.conversationalCategory,
+      complexity: understood.complexity,
+      configuredDetail: identitySettings.answerDetail,
+      explicitDepthOverride: understood.explicitDepthOverride,
+      temporarySessionDepth: convState.temporaryDepth,
+      channel,
+    });
+
+    if (identitySettings.conversationContinuity) {
+      const topicHint = effectiveText.slice(0, 80);
+      store.saveConversationContextState(actorId, conversationId, {
+        activeTopic: topicHint,
+        activePersonality: personalitySelection.primaryProfile,
+      });
+    }
+
+    const personalityMeta: PersonalityMetadata = {
+      activeProfile: personalitySelection.primaryProfile,
+      secondaryProfile: personalitySelection.secondaryProfile,
+      configuredMode: personalitySelection.configuredMode,
+      communicationStyle: personalitySelection.communicationStyle,
+      depth: depthSelection.depth,
+      isTemporaryOverride: personalitySelection.isTemporaryOverride || depthSelection.isTemporaryOverride,
+      selectionReason: `${personalitySelection.reason} ${depthSelection.reason}`.trim(),
+    };
+
     // 5. Task Resume & Follow-Up Continuity
     if (understood.intent === 'task_resume') {
       const resolvedTask = ctxEngine.resolveFollowUpTask(boundedCtx, 'active_or_waiting');
@@ -289,15 +350,29 @@ export class AssistantBrain {
       };
     }
 
-    // 6. Structured Capability Discovery & Multi-Tool Planning
+    // 6. Structured Capability Discovery & Multi-Tool Planning (skip for pure conversational / knowledge intents)
     const tPlanStart = Date.now();
-    const discovery = await getCapabilityDiscoveryEngine().discover({
-      request: effectiveText,
-      conversationId: sessionId,
-      conversationHistory: boundedCtx.recentMessages.map((m) => ({ role: m.role, content: m.content })),
-      timezone: profile.timezone,
-      useLlmFallback: false,
-    });
+    const discovery =
+      understood.intent === 'knowledge_question'
+        ? {
+            request: effectiveText,
+            normalizedIntent: effectiveText,
+            requiresTools: false,
+            isPureGreeting: false,
+            hasCompoundGreeting: false,
+            matched: [],
+            unavailable: [],
+            missingInputs: [],
+            ambiguous: false,
+            usedLlm: false,
+          }
+        : await getCapabilityDiscoveryEngine().discover({
+            request: effectiveText,
+            conversationId: sessionId,
+            conversationHistory: boundedCtx.recentMessages.map((m) => ({ role: m.role, content: m.content })),
+            timezone: profile.timezone,
+            useLlmFallback: false,
+          });
 
     if (discovery.clarificationNeeded && discovery.matched.length <= 1) {
       await clarificationEngine.setPending({
@@ -527,12 +602,22 @@ export class AssistantBrain {
       };
     }
 
-    // 9. Local Ollama Structured Tool Calling & Reasoning (bounded & injection-sanitized context)
+    // 9. Local Ollama Structured Tool Calling & Natural Conversation Generation (Phase 13)
     const ollama = getOllamaClient();
     const ollamaStatus = await ollama.checkStatus(1_200);
     if (ollamaStatus.reachable && ollamaStatus.modelAvailable) {
-      const memContext = boundedCtx.relevantMemories.map((m) => m.value).join('\n');
-      const systemPrompt = personality.buildSystemPrompt(profile, memContext);
+      const systemPrompt = adaptiveEngine.buildAdaptiveSystemPrompt({
+        legacyProfile: profile,
+        selection: personalitySelection,
+        depth: depthSelection,
+        channel,
+        memoryContext: {
+          preferences: boundedCtx.categorizedMemories.preferences,
+          projects: boundedCtx.categorizedMemories.projects,
+          knowledge: boundedCtx.categorizedMemories.knowledge,
+          activeTopic: boundedCtx.activeTopic,
+        },
+      });
       const history = boundedCtx.recentMessages;
 
       const messages: OllamaChatMessage[] = [
@@ -546,7 +631,7 @@ export class AssistantBrain {
 
       const chatRes = await ollama.chat({
         messages,
-        tools: registry.toOllamaSchemas(),
+        tools: understood.intent === 'knowledge_question' ? undefined : registry.toOllamaSchemas(),
       });
 
       if (chatRes.ok) {
@@ -579,6 +664,11 @@ export class AssistantBrain {
             ? finalChat.content
             : lastToolResult?.message || 'Done.';
 
+          const voiceSummary =
+            channel === 'voice' || depthSelection.depth === 'DETAILED'
+              ? adaptiveEngine.buildVoiceSummary(finalText, depthSelection.maxVoiceSentences)
+              : undefined;
+
           const result = await this.finish(
             intentId,
             effectiveText,
@@ -587,13 +677,16 @@ export class AssistantBrain {
             'claw',
             RiskLevel.LOW,
             startTime,
-            sessionId
+            sessionId,
+            actorId,
+            channel
           );
           return {
             ...result,
             toolResult: lastToolResult,
             executiveDecision: 'SYNTHESIZE_RESULTS',
             assistantRequest: understood,
+            personalityMeta: { ...personalityMeta, voiceSummary },
             timingsMs: {
               understanding: understandingMs,
               context: contextMs,
@@ -604,6 +697,11 @@ export class AssistantBrain {
         }
 
         if (chatRes.content) {
+          const voiceSummary =
+            channel === 'voice' || depthSelection.depth === 'DETAILED'
+              ? adaptiveEngine.buildVoiceSummary(chatRes.content, depthSelection.maxVoiceSentences)
+              : undefined;
+
           const res = await this.finish(
             intentId,
             effectiveText,
@@ -612,12 +710,15 @@ export class AssistantBrain {
             'claw',
             RiskLevel.LOW,
             startTime,
-            sessionId
+            sessionId,
+            actorId,
+            channel
           );
           return {
             ...res,
             executiveDecision: 'ANSWER_DIRECTLY',
             assistantRequest: understood,
+            personalityMeta: { ...personalityMeta, voiceSummary },
             timingsMs: {
               understanding: understandingMs,
               context: contextMs,
@@ -631,12 +732,16 @@ export class AssistantBrain {
       }
     }
 
-    // 10. Fallback to TaskRouter (ClawBridge) or honest offline guidance
+    // 10. Graceful offline guidance tailored to active personality
     if (!ollamaStatus.reachable) {
-      const honestMsg = personality.formatFailure(
-        `Local Ollama server is not reachable at ${ollamaStatus.baseUrl}.`,
-        `Start Ollama with "ollama serve" and ensure model "${ollamaStatus.configuredModel}" is pulled ("ollama pull ${ollamaStatus.configuredModel}").`
-      );
+      const honestMsg = adaptiveEngine.buildOfflineFallback({
+        rawInput: effectiveText,
+        userName: profile.userName,
+        selection: personalitySelection,
+        depth: depthSelection,
+        ollamaStatusError: ollamaStatus.error,
+        projectMemories: boundedCtx.categorizedMemories.projects,
+      });
       const res = await this.finish(
         intentId,
         effectiveText,
@@ -645,12 +750,18 @@ export class AssistantBrain {
         'internal',
         RiskLevel.LOW,
         startTime,
-        sessionId
+        sessionId,
+        actorId,
+        channel
       );
       return {
         ...res,
         executiveDecision: 'HANDLE_FAILURE',
         assistantRequest: understood,
+        personalityMeta: {
+          ...personalityMeta,
+          voiceSummary: adaptiveEngine.buildVoiceSummary(honestMsg, 2),
+        },
         timingsMs: {
           understanding: understandingMs,
           context: contextMs,
@@ -840,11 +951,13 @@ export class AssistantBrain {
     executor: TaskResult['executor'],
     risk: RiskLevel,
     startTime: number,
-    sessionId?: string
+    sessionId?: string,
+    actorId = 'local',
+    channel: InteractionChannel = 'text'
   ): Promise<TaskResult> {
     const durationMs = Date.now() - startTime;
     const store = await getMemoryStore();
-    store.logConversation('assistant', output, undefined, sessionId);
+    store.logConversation('assistant', output, undefined, sessionId, actorId, channel);
     store.logTask(intentId, 'assistant', input, output, success, risk, executor, durationMs);
     return {
       id: uuidv4(),

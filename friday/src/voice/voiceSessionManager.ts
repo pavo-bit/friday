@@ -130,7 +130,7 @@ export class VoiceSessionManager {
         commandText,
         sessionId,
         false, // Voice alone does not grant automatic high-risk approval
-        { actorId: 'voice' }
+        { actorId: 'voice', channel: 'voice' }
       );
 
       // Check for persistent clarification requirement
@@ -148,7 +148,10 @@ export class VoiceSessionManager {
         return;
       }
 
-      const responseText = brainResponse.output || "I've completed your request, Boss.";
+      const responseText =
+        brainResponse.personalityMeta?.voiceSummary ||
+        brainResponse.output ||
+        "I've completed your request, Boss.";
       this.speakAndReturnToStandby(responseText);
     } catch (err) {
       log.error('Executive Brain failed on voice command', { error: (err as Error).message });

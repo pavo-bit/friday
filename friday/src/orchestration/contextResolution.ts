@@ -41,6 +41,13 @@ export interface BoundedContextPackage {
     verificationStatus: string;
     createdAt: string;
   }>;
+  categorizedMemories: {
+    preferences: string[];
+    projects: string[];
+    knowledge: string[];
+  };
+  activeTopic: string;
+  isReturningTopic: boolean;
   injectionFilteredCount: number;
 }
 
@@ -95,22 +102,52 @@ export class ContextResolutionEngine {
     const store = await getMemoryStore();
     let injectionFilteredCount = 0;
 
-    const rawHistory = store.getRecentConversations(limits.maxHistory, req.conversationId);
+    const rawHistory = store.getRecentConversations(limits.maxHistory, req.conversationId, req.actorId);
     const recentMessages = rawHistory.map((h) => {
       const s = sanitizeRetrievedText(h.content);
       if (s.flagged) injectionFilteredCount++;
       return { role: h.role, content: s.safe, timestamp: h.createdAt };
     });
 
-    const rawMem = store.getRelevantContext(req.normalizedInput, limits.maxMemories);
-    const relevantMemories: BoundedContextPackage['relevantMemories'] = [];
-    for (const line of rawMem.split('\n').filter(Boolean).slice(0, limits.maxMemories)) {
-      const s = sanitizeRetrievedText(line);
-      if (s.flagged) {
-        injectionFilteredCount++;
-        continue;
+    // Actor-isolated categorized memories (preferences, project context, knowledge)
+    const prefRows = store.retrieveIdentityMemories(req.actorId, 'preference', 5);
+    const projRows = store.retrieveIdentityMemories(req.actorId, 'project', 4);
+    const knowRows = store.searchIdentityMemories(req.actorId, req.normalizedInput, limits.maxMemories);
+
+    const sanitizeList = (items: Array<{ key: string; value: string }>) => {
+      const out: string[] = [];
+      for (const item of items) {
+        const s = sanitizeRetrievedText(`${item.key}: ${item.value}`);
+        if (s.flagged) {
+          injectionFilteredCount++;
+          continue;
+        }
+        out.push(s.safe);
       }
-      relevantMemories.push({ key: 'memory', value: s.safe, source: 'sqlite_memory' });
+      return out;
+    };
+
+    const categorizedMemories = {
+      preferences: sanitizeList(prefRows),
+      projects: sanitizeList(projRows),
+      knowledge: sanitizeList(knowRows),
+    };
+
+    const convState = store.getConversationContextState(req.actorId, req.conversationId);
+    const activeTopic = convState.activeTopic || '';
+    const isReturningTopic =
+      Boolean(activeTopic) &&
+      req.normalizedInput
+        .toLowerCase()
+        .split(/\s+/)
+        .some((w) => w.length > 3 && activeTopic.toLowerCase().includes(w));
+
+    const relevantMemories: BoundedContextPackage['relevantMemories'] = [];
+    for (const line of [...categorizedMemories.preferences, ...categorizedMemories.projects, ...categorizedMemories.knowledge].slice(
+      0,
+      limits.maxMemories
+    )) {
+      relevantMemories.push({ key: 'memory', value: line, source: 'sqlite_memory' });
     }
 
     const tasks = await getBackgroundOrchestrator().listTasks(req.actorId, limits.maxTasks);
@@ -153,6 +190,9 @@ export class ContextResolutionEngine {
       activeTasks,
       pendingApprovals,
       recentPresentations,
+      categorizedMemories,
+      activeTopic,
+      isReturningTopic,
       injectionFilteredCount,
     };
   }

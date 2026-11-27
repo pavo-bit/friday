@@ -15,6 +15,13 @@ import {
   PersonalityProfile,
   DEFAULT_PERSONALITY_PROFILE,
 } from '../intelligence/personality';
+import {
+  DigitalIdentitySettings,
+  LOCKED_IDENTITY_DEFAULTS,
+  PersonalityMode,
+  CommunicationStyle,
+  ResponseDepthMode,
+} from '../personality/personalityTypes';
 import { v4 as uuidv4 } from 'uuid';
 import type Database from 'better-sqlite3';
 
@@ -309,19 +316,24 @@ export class MemoryStore {
     return merged;
   }
 
-  /** Log a conversation message (with secret redaction) */
+  /** Log a conversation message (with secret redaction, actor, and channel) */
   logConversation(
     role: 'user' | 'assistant' | 'system',
     content: string,
     intentAction?: string,
-    sessionId?: string
+    sessionId?: string,
+    actorId = 'local',
+    channel = 'text'
   ): void {
     if (!this.db) return;
 
     const id = uuidv4();
     this.db
-      .prepare(`INSERT INTO conversations (id, role, content, intent_action, session_id) VALUES (?, ?, ?, ?, ?)`)
-      .run(id, role, redactSecrets(content), intentAction || null, sessionId || null);
+      .prepare(
+        `INSERT INTO conversations (id, role, content, intent_action, session_id, actor_id, channel)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
+      )
+      .run(id, role, redactSecrets(content), intentAction || null, sessionId || null, actorId, channel);
   }
 
   /** Log a task execution result */
@@ -409,24 +421,30 @@ export class MemoryStore {
     }));
   }
 
-  /** Get recent conversation history */
+  /** Get recent conversation history (optionally scoped by session and actor) */
   getRecentConversations(
     limit = 20,
-    sessionId?: string
+    sessionId?: string,
+    actorId?: string
   ): Array<{
     role: string;
     content: string;
     action?: string;
+    channel?: string;
     createdAt: string;
   }> {
     if (!this.db) return [];
 
-    let sql = 'SELECT role, content, intent_action, created_at FROM conversations';
+    let sql = 'SELECT role, content, intent_action, channel, created_at FROM conversations WHERE 1=1';
     const params: unknown[] = [];
 
     if (sessionId) {
-      sql += ' WHERE session_id = ?';
+      sql += ' AND session_id = ?';
       params.push(sessionId);
+    }
+    if (actorId) {
+      sql += ' AND actor_id = ?';
+      params.push(actorId);
     }
 
     sql += ' ORDER BY created_at DESC LIMIT ?';
@@ -436,6 +454,7 @@ export class MemoryStore {
       role: string;
       content: string;
       intent_action: string | null;
+      channel: string | null;
       created_at: string;
     }>;
 
@@ -444,9 +463,371 @@ export class MemoryStore {
         role: row.role,
         content: row.content,
         action: row.intent_action || undefined,
+        channel: row.channel || undefined,
         createdAt: row.created_at,
       }))
       .reverse();
+  }
+
+  // ---- Phase 13: Digital Identity Settings & Actor-Isolated Categorized Memory ----
+
+  getDigitalIdentitySettings(actorId = 'default'): DigitalIdentitySettings {
+    if (!this.db) {
+      return { actorId, ...LOCKED_IDENTITY_DEFAULTS };
+    }
+    const row = this.db
+      .prepare(
+        `SELECT actor_id, default_personality, communication_style, answer_detail,
+                voice_concise_mode, conversation_continuity, memory_auto_learn, updated_at
+         FROM digital_identity_settings WHERE actor_id = ?`
+      )
+      .get(actorId) as
+      | {
+          actor_id: string;
+          default_personality: PersonalityMode;
+          communication_style: CommunicationStyle;
+          answer_detail: ResponseDepthMode;
+          voice_concise_mode: number;
+          conversation_continuity: number;
+          memory_auto_learn: number;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      const defaults: DigitalIdentitySettings = { actorId, ...LOCKED_IDENTITY_DEFAULTS };
+      this.saveDigitalIdentitySettings(actorId, defaults);
+      return defaults;
+    }
+
+    return {
+      actorId: row.actor_id,
+      defaultPersonality: row.default_personality,
+      communicationStyle: row.communication_style,
+      answerDetail: row.answer_detail,
+      voiceConciseMode: row.voice_concise_mode === 1,
+      conversationContinuity: row.conversation_continuity === 1,
+      memoryAutoLearn: row.memory_auto_learn === 1,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  saveDigitalIdentitySettings(
+    actorId = 'default',
+    partial: Partial<Omit<DigitalIdentitySettings, 'actorId' | 'updatedAt'>>
+  ): DigitalIdentitySettings {
+    const current = this.db
+      ? (this.db
+          .prepare(`SELECT * FROM digital_identity_settings WHERE actor_id = ?`)
+          .get(actorId) as Record<string, unknown> | undefined)
+      : undefined;
+
+    const merged: DigitalIdentitySettings = {
+      actorId,
+      defaultPersonality:
+        partial.defaultPersonality ??
+        (current?.default_personality as PersonalityMode) ??
+        LOCKED_IDENTITY_DEFAULTS.defaultPersonality,
+      communicationStyle:
+        partial.communicationStyle ??
+        (current?.communication_style as CommunicationStyle) ??
+        LOCKED_IDENTITY_DEFAULTS.communicationStyle,
+      answerDetail:
+        partial.answerDetail ??
+        (current?.answer_detail as ResponseDepthMode) ??
+        LOCKED_IDENTITY_DEFAULTS.answerDetail,
+      voiceConciseMode:
+        partial.voiceConciseMode ??
+        (current ? Number(current.voice_concise_mode) === 1 : LOCKED_IDENTITY_DEFAULTS.voiceConciseMode),
+      conversationContinuity:
+        partial.conversationContinuity ??
+        (current ? Number(current.conversation_continuity) === 1 : LOCKED_IDENTITY_DEFAULTS.conversationContinuity),
+      memoryAutoLearn:
+        partial.memoryAutoLearn ??
+        (current ? Number(current.memory_auto_learn) === 1 : LOCKED_IDENTITY_DEFAULTS.memoryAutoLearn),
+    };
+
+    if (this.db) {
+      this.db
+        .prepare(
+          `INSERT INTO digital_identity_settings (
+             actor_id, default_personality, communication_style, answer_detail,
+             voice_concise_mode, conversation_continuity, memory_auto_learn, updated_at
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
+           ON CONFLICT(actor_id) DO UPDATE SET
+             default_personality = excluded.default_personality,
+             communication_style = excluded.communication_style,
+             answer_detail = excluded.answer_detail,
+             voice_concise_mode = excluded.voice_concise_mode,
+             conversation_continuity = excluded.conversation_continuity,
+             memory_auto_learn = excluded.memory_auto_learn,
+             updated_at = datetime('now')`
+        )
+        .run(
+          actorId,
+          merged.defaultPersonality,
+          merged.communicationStyle,
+          merged.answerDetail,
+          merged.voiceConciseMode ? 1 : 0,
+          merged.conversationContinuity ? 1 : 0,
+          merged.memoryAutoLearn ? 1 : 0
+        );
+    }
+
+    return merged;
+  }
+
+  getConversationContextState(
+    actorId: string,
+    conversationId: string
+  ): {
+    activeTopic: string;
+    activePersonality: PersonalityMode;
+    temporaryPersonality: PersonalityMode | null;
+    temporaryDepth: ResponseDepthMode | null;
+    updatedAt?: string;
+  } {
+    if (!this.db) {
+      return {
+        activeTopic: '',
+        activePersonality: 'ADAPTIVE',
+        temporaryPersonality: null,
+        temporaryDepth: null,
+      };
+    }
+    const row = this.db
+      .prepare(
+        `SELECT active_topic, active_personality, temporary_personality, temporary_depth, updated_at
+         FROM conversation_context_state WHERE actor_id = ? AND conversation_id = ?`
+      )
+      .get(actorId, conversationId) as
+      | {
+          active_topic: string;
+          active_personality: PersonalityMode;
+          temporary_personality: PersonalityMode | null;
+          temporary_depth: ResponseDepthMode | null;
+          updated_at: string;
+        }
+      | undefined;
+
+    if (!row) {
+      return {
+        activeTopic: '',
+        activePersonality: 'ADAPTIVE',
+        temporaryPersonality: null,
+        temporaryDepth: null,
+      };
+    }
+
+    return {
+      activeTopic: row.active_topic || '',
+      activePersonality: row.active_personality || 'ADAPTIVE',
+      temporaryPersonality: row.temporary_personality || null,
+      temporaryDepth: row.temporary_depth || null,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  saveConversationContextState(
+    actorId: string,
+    conversationId: string,
+    update: {
+      activeTopic?: string;
+      activePersonality?: PersonalityMode;
+      temporaryPersonality?: PersonalityMode | null;
+      temporaryDepth?: ResponseDepthMode | null;
+    }
+  ): void {
+    if (!this.db) return;
+    const current = this.getConversationContextState(actorId, conversationId);
+    const nextTopic = update.activeTopic !== undefined ? update.activeTopic : current.activeTopic;
+    const nextActive = update.activePersonality !== undefined ? update.activePersonality : current.activePersonality;
+    const nextTempP =
+      update.temporaryPersonality !== undefined ? update.temporaryPersonality : current.temporaryPersonality;
+    const nextTempD = update.temporaryDepth !== undefined ? update.temporaryDepth : current.temporaryDepth;
+
+    this.db
+      .prepare(
+        `INSERT INTO conversation_context_state (
+           actor_id, conversation_id, active_topic, active_personality,
+           temporary_personality, temporary_depth, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+         ON CONFLICT(actor_id, conversation_id) DO UPDATE SET
+           active_topic = excluded.active_topic,
+           active_personality = excluded.active_personality,
+           temporary_personality = excluded.temporary_personality,
+           temporary_depth = excluded.temporary_depth,
+           updated_at = datetime('now')`
+      )
+      .run(actorId, conversationId, nextTopic, nextActive, nextTempP, nextTempD);
+  }
+
+  /**
+   * Store categorized, actor-isolated memory with provenance & conflict resolution.
+   * For preference, project, and knowledge categories, updating the same (actorId, category, key)
+   * resolves conflicts cleanly rather than leaving stale duplicates.
+   */
+  storeIdentityMemory(params: {
+    actorId: string;
+    type: MemoryEntry['type'];
+    category: 'conversation' | 'preference' | 'knowledge' | 'project' | 'task_temp';
+    key: string;
+    value: string;
+    provenance?: string;
+    confidence?: number;
+    metadata?: Record<string, string>;
+  }): FridayId {
+    if (containsSensitiveCredential(params.value)) {
+      throw new Error('Refusing to store plaintext passwords, API keys, or auth tokens in memory.');
+    }
+
+    const safeKey = redactSecrets(params.key.trim());
+    const safeValue = redactSecrets(params.value.trim());
+    const provenance = params.provenance || 'conversation';
+    const confidence = Math.max(0, Math.min(1, params.confidence ?? 0.9));
+
+    if (this.db) {
+      if (params.category === 'preference' || params.category === 'project' || params.category === 'knowledge') {
+        const existing = this.db
+          .prepare(
+            `SELECT id FROM memories WHERE actor_id = ? AND category = ? AND LOWER(key) = LOWER(?) LIMIT 1`
+          )
+          .get(params.actorId, params.category, safeKey) as { id: string } | undefined;
+
+        if (existing) {
+          this.db
+            .prepare(
+              `UPDATE memories
+               SET value = ?, provenance = ?, confidence = ?, metadata = ?,
+                   updated_at = datetime('now'), last_accessed_at = datetime('now'), access_count = access_count + 1
+               WHERE id = ? AND actor_id = ?`
+            )
+            .run(
+              safeValue,
+              provenance,
+              confidence,
+              JSON.stringify(params.metadata || {}),
+              existing.id,
+              params.actorId
+            );
+          return existing.id;
+        }
+      }
+
+      const id = uuidv4();
+      this.db
+        .prepare(
+          `INSERT INTO memories (id, type, key, value, metadata, actor_id, category, provenance, confidence, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))`
+        )
+        .run(
+          id,
+          params.type,
+          safeKey,
+          safeValue,
+          JSON.stringify(params.metadata || {}),
+          params.actorId,
+          params.category,
+          provenance,
+          confidence
+        );
+      return id;
+    }
+
+    return uuidv4();
+  }
+
+  retrieveIdentityMemories(
+    actorId: string,
+    category?: 'conversation' | 'preference' | 'knowledge' | 'project' | 'task_temp',
+    limit = 15
+  ): Array<MemoryEntry & { actorId: string; category: string; provenance: string; confidence: number }> {
+    if (!this.db) return [];
+    let sql = 'SELECT * FROM memories WHERE actor_id = ?';
+    const params: unknown[] = [actorId];
+    if (category) {
+      sql += ' AND category = ?';
+      params.push(category);
+    }
+    sql += ' ORDER BY last_accessed_at DESC LIMIT ?';
+    params.push(limit);
+
+    const rows = this.db.prepare(sql).all(...params) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      type: String(row.type) as MemoryEntry['type'],
+      key: String(row.key),
+      value: String(row.value),
+      metadata: JSON.parse(String(row.metadata || '{}')),
+      createdAt: String(row.created_at),
+      lastAccessedAt: String(row.last_accessed_at),
+      accessCount: Number(row.access_count || 0),
+      actorId: String(row.actor_id || 'local'),
+      category: String(row.category || 'knowledge'),
+      provenance: String(row.provenance || 'conversation'),
+      confidence: Number(row.confidence ?? 0.9),
+    }));
+  }
+
+  searchIdentityMemories(
+    actorId: string,
+    query: string,
+    limit = 8
+  ): Array<MemoryEntry & { actorId: string; category: string; provenance: string; confidence: number }> {
+    if (!this.db || !query.trim()) return [];
+    const keywords = query
+      .toLowerCase()
+      .split(/\s+/)
+      .filter((w) => w.length > 2);
+    if (keywords.length === 0) return [];
+
+    const conditions = keywords.map(() => '(LOWER(key) LIKE ? OR LOWER(value) LIKE ?)');
+    const kwParams: string[] = [];
+    for (const kw of keywords) {
+      kwParams.push(`%${kw}%`, `%${kw}%`);
+    }
+
+    const sql = `
+      SELECT * FROM memories
+      WHERE actor_id = ? AND (${conditions.join(' OR ')})
+      ORDER BY last_accessed_at DESC
+      LIMIT ?
+    `;
+    const rows = this.db.prepare(sql).all(actorId, ...kwParams, limit) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      type: String(row.type) as MemoryEntry['type'],
+      key: String(row.key),
+      value: String(row.value),
+      metadata: JSON.parse(String(row.metadata || '{}')),
+      createdAt: String(row.created_at),
+      lastAccessedAt: String(row.last_accessed_at),
+      accessCount: Number(row.access_count || 0),
+      actorId: String(row.actor_id || 'local'),
+      category: String(row.category || 'knowledge'),
+      provenance: String(row.provenance || 'conversation'),
+      confidence: Number(row.confidence ?? 0.9),
+    }));
+  }
+
+  updateMemoryForActor(actorId: string, id: string, value: string): boolean {
+    if (!this.db) return false;
+    if (containsSensitiveCredential(value)) {
+      throw new Error('Refusing to store plaintext passwords, API keys, or auth tokens in memory.');
+    }
+    const info = this.db
+      .prepare(
+        `UPDATE memories SET value = ?, updated_at = datetime('now'), last_accessed_at = datetime('now')
+         WHERE id = ? AND actor_id = ?`
+      )
+      .run(redactSecrets(value), id, actorId);
+    return info.changes > 0;
+  }
+
+  deleteMemoryForActor(actorId: string, id: string): boolean {
+    if (!this.db) return false;
+    const info = this.db.prepare(`DELETE FROM memories WHERE id = ? AND actor_id = ?`).run(id, actorId);
+    return info.changes > 0;
   }
 
   /** Get memory statistics */

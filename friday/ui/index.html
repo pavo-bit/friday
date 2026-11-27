@@ -482,9 +482,38 @@ Loading voice health diagnostics...
       <section class="tab-panel" id="tab-settings">
         <div class="two-col">
           <div class="card">
-            <div class="card-header"><h2>Personality Profile</h2></div>
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+              <h2>Digital Identity &amp; Personality</h2>
+              <span class="badge" id="idActivePersonalityBadge">Active: ADAPTIVE</span>
+            </div>
             <form id="personalityForm" class="stack-form">
               <label>User Name <input type="text" id="profUserName"></label>
+              <label>Default Personality
+                <select id="idDefaultPersonality">
+                  <option value="ADAPTIVE">Adaptive (Automatic)</option>
+                  <option value="TEACHER">Teacher (Tutor)</option>
+                  <option value="FRIEND">Friend (Conversational)</option>
+                  <option value="COMPANION">Companion (Continuity)</option>
+                  <option value="TECHNICAL_EXPERT">Technical Expert</option>
+                  <option value="PROFESSIONAL_ASSISTANT">Professional Assistant</option>
+                </select>
+              </label>
+              <label>Communication Style
+                <select id="idCommStyle">
+                  <option value="NATURAL">Natural (Warm &amp; Clear)</option>
+                  <option value="WARM">Warm &amp; Supportive</option>
+                  <option value="DIRECT">Direct &amp; Crisp</option>
+                  <option value="FORMAL">Formal</option>
+                </select>
+              </label>
+              <label>Response Detail
+                <select id="idAnswerDetail">
+                  <option value="ADAPTIVE">Adaptive</option>
+                  <option value="CONCISE">Concise</option>
+                  <option value="BALANCED">Balanced</option>
+                  <option value="DETAILED">Detailed</option>
+                </select>
+              </label>
               <label>Formality
                 <select id="profFormality">
                   <option value="formal">Formal</option>
@@ -507,8 +536,27 @@ Loading voice health diagnostics...
                 </select>
               </label>
               <label>Timezone <input type="text" id="profTimezone" placeholder="Asia/Kolkata"></label>
+              <label class="checkbox-label"><input type="checkbox" id="idVoiceConcise" checked> Concise spoken summaries for voice</label>
+              <label class="checkbox-label"><input type="checkbox" id="idConvContinuity" checked> Maintain conversation continuity</label>
+              <label class="checkbox-label"><input type="checkbox" id="idMemoryAutoLearn" checked> Remember relevant preferences &amp; projects</label>
               <button type="submit" class="btn-primary">Save Personality</button>
             </form>
+
+            <div style="margin-top:14px; padding-top:12px; border-top:1px solid var(--panel-border);">
+              <div style="font-size:12px; color:var(--muted); margin-bottom:6px;">Temporary Session Override (does not alter defaults)</div>
+              <div style="display:flex; gap:8px; align-items:center;">
+                <select id="idTempOverride" style="flex:1;">
+                  <option value="">None (Use Default / Adaptive)</option>
+                  <option value="TEACHER">Teacher</option>
+                  <option value="FRIEND">Friend</option>
+                  <option value="COMPANION">Companion</option>
+                  <option value="TECHNICAL_EXPERT">Technical Expert</option>
+                  <option value="PROFESSIONAL_ASSISTANT">Professional Assistant</option>
+                </select>
+                <button type="button" class="btn-sm" id="idApplyTempBtn">Apply</button>
+                <button type="button" class="btn-sm" id="idClearTempBtn">Reset</button>
+              </div>
+            </div>
           </div>
 
           <div class="card">

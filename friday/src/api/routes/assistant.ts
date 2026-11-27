@@ -211,16 +211,62 @@ assistantRoutes.post('/locations/geofence', async (req: Request, res: Response) 
   }
 });
 
-// ---- Personality & Runtime Settings (Phase 1 / Phase 9) ----
-assistantRoutes.get('/personality', async (_req: Request, res: Response) => {
+// ---- Personality & Digital Identity Settings (Phase 1 / Phase 9 / Phase 13) ----
+assistantRoutes.get('/personality', async (req: Request, res: Response) => {
   const store = await getMemoryStore();
-  res.json({ profile: store.getPersonalityProfile() });
+  const actorId = (req.query.actorId as string) || 'local';
+  const conversationId = (req.query.sessionId as string) || 'default';
+  const profile = store.getPersonalityProfile();
+  const digitalIdentity = store.getDigitalIdentitySettings(actorId);
+  const conversationState = store.getConversationContextState(actorId, conversationId);
+  res.json({ profile, digitalIdentity, conversationState });
 });
 
 assistantRoutes.put('/personality', async (req: Request, res: Response) => {
   const store = await getMemoryStore();
-  const updated = store.savePersonalityProfile(req.body || {});
-  res.json({ profile: updated });
+  const body = (req.body || {}) as Record<string, unknown>;
+  const actorId = (body.actorId as string) || 'local';
+  const updated = store.savePersonalityProfile(body);
+  const digitalIdentity = store.saveDigitalIdentitySettings(actorId, {
+    ...(body.defaultPersonality ? { defaultPersonality: body.defaultPersonality as any } : {}),
+    ...(body.communicationStyle ? { communicationStyle: body.communicationStyle as any } : {}),
+    ...(body.answerDetail ? { answerDetail: body.answerDetail as any } : {}),
+    ...(typeof body.voiceConciseMode === 'boolean' ? { voiceConciseMode: body.voiceConciseMode } : {}),
+    ...(typeof body.conversationContinuity === 'boolean'
+      ? { conversationContinuity: body.conversationContinuity }
+      : {}),
+    ...(typeof body.memoryAutoLearn === 'boolean' ? { memoryAutoLearn: body.memoryAutoLearn } : {}),
+  });
+  res.json({ profile: updated, digitalIdentity });
+});
+
+assistantRoutes.post('/personality/override', async (req: Request, res: Response) => {
+  const store = await getMemoryStore();
+  const body = (req.body || {}) as {
+    actorId?: string;
+    sessionId?: string;
+    temporaryPersonality?: string | null;
+    temporaryDepth?: string | null;
+  };
+  const actorId = body.actorId || 'local';
+  const conversationId = body.sessionId || 'default';
+  store.saveConversationContextState(actorId, conversationId, {
+    temporaryPersonality: (body.temporaryPersonality as any) ?? null,
+    temporaryDepth: (body.temporaryDepth as any) ?? null,
+  });
+  const state = store.getConversationContextState(actorId, conversationId);
+  res.json({ conversationState: state });
+});
+
+assistantRoutes.delete('/personality/override', async (req: Request, res: Response) => {
+  const store = await getMemoryStore();
+  const actorId = (req.query.actorId as string) || 'local';
+  const conversationId = (req.query.sessionId as string) || 'default';
+  store.saveConversationContextState(actorId, conversationId, {
+    temporaryPersonality: null,
+    temporaryDepth: null,
+  });
+  res.json({ cleared: true });
 });
 
 assistantRoutes.get('/ollama/status', async (_req: Request, res: Response) => {

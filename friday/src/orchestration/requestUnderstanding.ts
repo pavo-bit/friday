@@ -4,6 +4,11 @@
 // ============================================================
 
 import { v4 as uuidv4 } from 'uuid';
+import {
+  ConversationalCategory,
+  PersonalityMode,
+  ResponseDepthMode,
+} from '../personality/personalityTypes';
 
 export type ExecutiveIntentKind =
   | 'greeting'
@@ -22,6 +27,11 @@ export interface AssistantRequest {
   rawInput: string;
   normalizedInput: string;
   intent: ExecutiveIntentKind;
+  conversationalCategory: ConversationalCategory;
+  complexity: 'simple' | 'moderate' | 'complex';
+  explicitPersonalityOverride?: PersonalityMode;
+  explicitDepthOverride?: ResponseDepthMode;
+  persistOverride?: boolean;
   subIntents: string[];
   entities: {
     symbols: string[];
@@ -152,6 +162,37 @@ export class RequestUnderstandingEngine {
       }
     }
 
+    // Phase 13: Explicit personality & depth override extraction + conversational classification
+    const explicitPersonalityOverride = this.detectPersonalityOverride(normalizedInput);
+    const explicitDepthOverride = this.detectDepthOverride(normalizedInput);
+    const persistOverride = /\b(always|from\s+now\s+on|set\s+(?:as\s+)?my\s+default|permanently)\b/i.test(
+      normalizedInput
+    );
+
+    const conversationalCategory = this.classifyConversationalCategory(
+      normalizedInput,
+      intent,
+      urls.length > 0
+    );
+
+    // Non-execution conversational categories should route through conversational LLM / Digital Identity
+    if (
+      intent === 'capability_action' &&
+      (conversationalCategory === 'personal_discussion' ||
+        conversationalCategory === 'casual_conversation' ||
+        conversationalCategory === 'emotional_support' ||
+        conversationalCategory === 'creative_request' ||
+        conversationalCategory === 'learning_request') &&
+      !/\b(check|show|list|run|open|send|create|delete|analyze|scan|backtest|watch|monitor|remind|alarm)\b/i.test(
+        normalizedInput
+      )
+    ) {
+      intent = 'knowledge_question';
+      requiresExecution = false;
+    }
+
+    const complexity = this.assessComplexity(normalizedInput, conversationalCategory);
+
     return {
       requestId: uuidv4(),
       conversationId,
@@ -159,6 +200,11 @@ export class RequestUnderstandingEngine {
       rawInput,
       normalizedInput,
       intent,
+      conversationalCategory,
+      complexity,
+      explicitPersonalityOverride,
+      explicitDepthOverride,
+      persistOverride: explicitPersonalityOverride || explicitDepthOverride ? persistOverride : undefined,
       subIntents,
       entities: { symbols, urls, timeReferences, amounts },
       constraints,
@@ -169,6 +215,109 @@ export class RequestUnderstandingEngine {
       requiresExecution,
       createdAt: new Date().toISOString(),
     };
+  }
+
+  private detectPersonalityOverride(text: string): PersonalityMode | undefined {
+    const lower = text.toLowerCase();
+    if (/\b(reset\s+personality|adaptive\s+mode|back\s+to\s+adaptive)\b/i.test(lower)) return 'ADAPTIVE';
+    if (/\b(like\s+a\s+teacher|teach\s+me|tutor\s+me|be\s+my\s+teacher|teacher\s+mode)\b/i.test(lower)) {
+      return 'TEACHER';
+    }
+    if (/\b(like\s+a\s+friend|talk\s+casually|be\s+casual|be\s+brutally\s+honest|friend\s+mode)\b/i.test(lower)) {
+      return 'FRIEND';
+    }
+    if (/\b(be\s+more\s+professional|professional\s+mode|formal\s+assistant)\b/i.test(lower)) {
+      return 'PROFESSIONAL_ASSISTANT';
+    }
+    if (/\b(expert[\s-]level|like\s+an\s+expert|technical\s+expert|like\s+a\s+senior\s+engineer)\b/i.test(lower)) {
+      return 'TECHNICAL_EXPERT';
+    }
+    if (/\b(let'?s\s+just\s+talk|just\s+chat|companion\s+mode)\b/i.test(lower)) {
+      return 'COMPANION';
+    }
+    return undefined;
+  }
+
+  private detectDepthOverride(text: string): ResponseDepthMode | undefined {
+    const lower = text.toLowerCase();
+    if (/\b(keep\s+it\s+short|be\s+concise|in\s+short|briefly|tldr|tl;dr|one\s+line)\b/i.test(lower)) {
+      return 'CONCISE';
+    }
+    if (/\b(explain\s+everything\s+step\s+by\s+step|step\s+by\s+step|in\s+detail|deep\s+dive|comprehensive|for\s+my\s+exam(?:ination)?)\b/i.test(lower)) {
+      return 'DETAILED';
+    }
+    if (/\b(balanced\s+detail|moderate\s+detail)\b/i.test(lower)) {
+      return 'BALANCED';
+    }
+    return undefined;
+  }
+
+  private classifyConversationalCategory(
+    text: string,
+    intent: ExecutiveIntentKind,
+    hasUrl: boolean
+  ): ConversationalCategory {
+    const lower = text.toLowerCase();
+    if (intent === 'follow_up') return 'follow_up';
+    if (intent === 'clarification_response') return 'clarification';
+
+    if (/\b(stressed|overwhelmed|anxious|burned\s+out|feeling\s+down|frustrated|exhausted)\b/i.test(lower)) {
+      return 'emotional_support';
+    }
+    if (/\b(let'?s\s+talk|how\s+are\s+you|just\s+chatting|what'?s\s+up|tell\s+me\s+a\s+joke)\b/i.test(lower)) {
+      return 'casual_conversation';
+    }
+    if (
+      /\b(career\s+path|confused\s+about|which\s+path|should\s+i\s+choose|life\s+decision|what\s+do\s+you\s+think\s+i\s+should|personal\s+advice)\b/i.test(
+        lower
+      )
+    ) {
+      return 'personal_discussion';
+    }
+    if (
+      /\b(review\s+my\s+backend|architecture|code\s+review|refactor|trade[\s-]offs?|implementation\s+in\s+detail|bug|stack\s+trace|memory\s+leak|latency|concurrency|deadlock)\b/i.test(
+        lower
+      )
+    ) {
+      return 'technical_problem';
+    }
+    if (
+      /\b(teach\s+me|explain|what\s+is\s+|how\s+does|learn|study|for\s+my\s+exam|practice\s+questions|beginner)\b/i.test(
+        lower
+      )
+    ) {
+      return 'learning_request';
+    }
+    if (hasUrl || /\b(inspect\s+this\s+website|research|investigate|compare\s+options)\b/i.test(lower)) {
+      return 'research_request';
+    }
+    if (/\b(brainstorm|write\s+a\s+|creative|poem|story|tagline|slogan)\b/i.test(lower)) {
+      return 'creative_request';
+    }
+    if (intent === 'knowledge_question') {
+      return 'general_question';
+    }
+    return 'task_execution';
+  }
+
+  private assessComplexity(
+    text: string,
+    category: ConversationalCategory
+  ): 'simple' | 'moderate' | 'complex' {
+    const wordCount = text.split(/\s+/).length;
+    if (
+      category === 'technical_problem' ||
+      /\b(in\s+detail|architecture|implementation|trade[\s-]offs?|step\s+by\s+step|comprehensive|compare)\b/i.test(
+        text
+      ) ||
+      wordCount >= 18
+    ) {
+      return 'complex';
+    }
+    if (wordCount <= 6 && (category === 'casual_conversation' || category === 'general_question')) {
+      return 'simple';
+    }
+    return 'moderate';
   }
 }
 

@@ -580,6 +580,49 @@ export const MIGRATIONS: Migration[] = [
         ON pending_clarifications(status, expires_at);
     `,
   },
+  {
+    version: 9,
+    name: 'digital_identity_and_adaptive_personality',
+    sql: `
+      CREATE TABLE IF NOT EXISTS digital_identity_settings (
+        actor_id TEXT PRIMARY KEY,
+        default_personality TEXT NOT NULL DEFAULT 'ADAPTIVE'
+          CHECK(default_personality IN ('ADAPTIVE', 'TEACHER', 'FRIEND', 'COMPANION', 'TECHNICAL_EXPERT', 'PROFESSIONAL_ASSISTANT')),
+        communication_style TEXT NOT NULL DEFAULT 'NATURAL'
+          CHECK(communication_style IN ('NATURAL', 'WARM', 'DIRECT', 'FORMAL')),
+        answer_detail TEXT NOT NULL DEFAULT 'ADAPTIVE'
+          CHECK(answer_detail IN ('ADAPTIVE', 'CONCISE', 'BALANCED', 'DETAILED')),
+        voice_concise_mode INTEGER NOT NULL DEFAULT 1,
+        conversation_continuity INTEGER NOT NULL DEFAULT 1,
+        memory_auto_learn INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS conversation_context_state (
+        actor_id TEXT NOT NULL,
+        conversation_id TEXT NOT NULL,
+        active_topic TEXT DEFAULT '',
+        active_personality TEXT DEFAULT 'ADAPTIVE',
+        temporary_personality TEXT,
+        temporary_depth TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        PRIMARY KEY (actor_id, conversation_id)
+      );
+
+      ALTER TABLE memories ADD COLUMN actor_id TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE memories ADD COLUMN category TEXT NOT NULL DEFAULT 'knowledge';
+      ALTER TABLE memories ADD COLUMN provenance TEXT NOT NULL DEFAULT 'conversation';
+      ALTER TABLE memories ADD COLUMN confidence REAL NOT NULL DEFAULT 0.9;
+      ALTER TABLE memories ADD COLUMN updated_at TEXT;
+
+      CREATE INDEX IF NOT EXISTS idx_memories_actor_cat ON memories(actor_id, category);
+      CREATE INDEX IF NOT EXISTS idx_memories_actor_key ON memories(actor_id, key);
+
+      ALTER TABLE conversations ADD COLUMN actor_id TEXT NOT NULL DEFAULT 'local';
+      ALTER TABLE conversations ADD COLUMN channel TEXT NOT NULL DEFAULT 'text';
+      CREATE INDEX IF NOT EXISTS idx_conversations_actor_session ON conversations(actor_id, session_id);
+    `,
+  },
 ];
 
 /**

@@ -346,11 +346,12 @@
   document.getElementById('memSearchInput').addEventListener('input', (e) => loadMemories(e.target.value));
 
   async function loadSettings() {
-    const [{ profile }, { devices }, { logs }] = await Promise.all([
+    const [persData, { devices }, { logs }] = await Promise.all([
       api('/friday/personality'),
       api('/friday/auth/devices'),
       api('/friday/audit?limit=20'),
     ]);
+    const { profile, digitalIdentity, conversationState } = persData;
 
     const hour = new Date().getHours();
     const salutation = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
@@ -362,6 +363,33 @@
     document.getElementById('profHumor').value = profile.humor;
     document.getElementById('profVerbosity').value = profile.verbosity;
     document.getElementById('profTimezone').value = profile.timezone;
+
+    if (digitalIdentity) {
+      const defEl = document.getElementById('idDefaultPersonality');
+      const styleEl = document.getElementById('idCommStyle');
+      const detEl = document.getElementById('idAnswerDetail');
+      const vcEl = document.getElementById('idVoiceConcise');
+      const ccEl = document.getElementById('idConvContinuity');
+      const mlEl = document.getElementById('idMemoryAutoLearn');
+      if (defEl) defEl.value = digitalIdentity.defaultPersonality || 'ADAPTIVE';
+      if (styleEl) styleEl.value = digitalIdentity.communicationStyle || 'NATURAL';
+      if (detEl) detEl.value = digitalIdentity.answerDetail || 'ADAPTIVE';
+      if (vcEl) vcEl.checked = Boolean(digitalIdentity.voiceConciseMode);
+      if (ccEl) ccEl.checked = Boolean(digitalIdentity.conversationContinuity);
+      if (mlEl) mlEl.checked = Boolean(digitalIdentity.memoryAutoLearn);
+    }
+
+    if (conversationState) {
+      const badge = document.getElementById('idActivePersonalityBadge');
+      const tempSel = document.getElementById('idTempOverride');
+      const active = conversationState.temporaryPersonality || conversationState.activePersonality || 'ADAPTIVE';
+      if (badge) {
+        badge.textContent = conversationState.temporaryPersonality
+          ? `Temp: ${active}`
+          : `Active: ${active}`;
+      }
+      if (tempSel) tempSel.value = conversationState.temporaryPersonality || '';
+    }
 
     document.getElementById('chipDevices').textContent = `Devices: ${devices.length}`;
     document.getElementById('statDevicesSub').textContent = `${devices.length} paired device(s)`;
@@ -408,10 +436,36 @@
         humor: document.getElementById('profHumor').value,
         verbosity: document.getElementById('profVerbosity').value,
         timezone: document.getElementById('profTimezone').value,
+        defaultPersonality: document.getElementById('idDefaultPersonality')?.value,
+        communicationStyle: document.getElementById('idCommStyle')?.value,
+        answerDetail: document.getElementById('idAnswerDetail')?.value,
+        voiceConciseMode: document.getElementById('idVoiceConcise')?.checked,
+        conversationContinuity: document.getElementById('idConvContinuity')?.checked,
+        memoryAutoLearn: document.getElementById('idMemoryAutoLearn')?.checked,
       }),
     });
     loadSettings();
   });
+
+  const applyTempBtn = document.getElementById('idApplyTempBtn');
+  if (applyTempBtn) {
+    applyTempBtn.addEventListener('click', async () => {
+      const val = document.getElementById('idTempOverride').value || null;
+      await api('/friday/personality/override', {
+        method: 'POST',
+        body: JSON.stringify({ temporaryPersonality: val }),
+      });
+      loadSettings();
+    });
+  }
+
+  const clearTempBtn = document.getElementById('idClearTempBtn');
+  if (clearTempBtn) {
+    clearTempBtn.addEventListener('click', async () => {
+      await api('/friday/personality/override', { method: 'DELETE' });
+      loadSettings();
+    });
+  }
 
   document.getElementById('genPairCodeBtn').addEventListener('click', async () => {
     const res = await api('/friday/auth/pair-code', { method: 'POST' });
