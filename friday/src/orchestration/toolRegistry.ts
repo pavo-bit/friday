@@ -1,6 +1,6 @@
 // ============================================================
-// FRIDAY — Central Typed Tool Registry & Execution Lifecycle
-// Schema-validated, permission-checked, audited tool execution
+// FRIDAY — Central Typed Capability Registry & Execution Lifecycle
+// Schema-validated, permission-checked, audited capability execution
 // ============================================================
 
 import { RiskLevel } from '../shared/types';
@@ -14,147 +14,595 @@ import { getNotificationService, NotificationSeverity } from '../services/notifi
 import { getClawBridge } from './clawBridge';
 import { createLayerLogger } from '../shared/logger';
 
-const log = createLayerLogger('ToolRegistry');
+const log = createLayerLogger('CapabilityRegistry');
 
-export interface ToolContext {
+export type CapabilityCategory =
+  | 'system'
+  | 'monitoring'
+  | 'scheduler'
+  | 'location'
+  | 'notifications'
+  | 'finance'
+  | 'trading'
+  | 'files'
+  | 'developer'
+  | 'web'
+  | 'companion'
+  | 'general';
+
+export type CapabilityRiskLevel = 'low' | 'medium' | 'high';
+
+export interface CapabilitySchemaProperty {
+  type: 'string' | 'number' | 'boolean' | 'object' | 'array';
+  description?: string;
+  enum?: readonly string[];
+  items?: CapabilitySchemaProperty;
+}
+
+export interface CapabilitySchema {
+  type: 'object' | 'array' | 'string' | 'number' | 'boolean';
+  properties?: Record<string, CapabilitySchemaProperty>;
+  required?: readonly string[];
+  items?: CapabilitySchemaProperty;
+  additionalProperties?: boolean;
+}
+
+export interface ValidationResult {
+  valid: boolean;
+  errors: string[];
+}
+
+export interface AvailabilityResult {
+  available: boolean;
+  reason?: string;
+}
+
+export interface CapabilityProvenance {
+  source: string;
+  timestamp: string;
+  freshness?: string;
+}
+
+export interface CapabilityContext {
   actor: string;
+  taskId?: string;
   approvedHighRisk?: boolean;
+  grantedPermissions?: readonly string[];
   timezone?: string;
 }
 
-export interface ToolExecutionResult {
-  tool: string;
+export interface CapabilityResult {
   success: boolean;
   verified: boolean;
+  capabilityId: string;
+  tool: string;
+  taskId?: string;
   data?: unknown;
   message: string;
   error?: string;
+  provenance?: CapabilityProvenance;
   requiresApproval?: boolean;
   durationMs: number;
 }
 
-export interface ToolDefinition {
-  name: string;
-  description: string;
-  risk: RiskLevel;
-  requiredPermissions: string[];
-  timeoutMs: number;
-  inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
-  validate: (args: Record<string, unknown>) => string | null;
-  execute: (args: Record<string, unknown>, ctx: ToolContext) => Promise<{ verified: boolean; data?: unknown; message: string }>;
+export interface CapabilityRawOutcome {
+  verified: boolean;
+  data?: unknown;
+  message: string;
+  provenance?: CapabilityProvenance;
 }
 
-export class ToolRegistry {
-  private tools: Map<string, ToolDefinition> = new Map();
+export interface CapabilityDefinition {
+  id: string;
+  name: string;
+  description: string;
+  category: CapabilityCategory;
+  version: string;
+  inputSchema: CapabilitySchema;
+  outputSchema: CapabilitySchema;
+  permissions: string[];
+  /** Legacy alias for permissions */
+  requiredPermissions: string[];
+  riskLevel: CapabilityRiskLevel;
+  /** Legacy alias for riskLevel */
+  risk: RiskLevel;
+  timeoutMs: number;
+  enabled: boolean;
+  trusted: boolean;
+  validate: (input: unknown) => ValidationResult;
+  isAvailable: () => Promise<AvailabilityResult>;
+  execute: (args: Record<string, unknown>, ctx: CapabilityContext) => Promise<CapabilityRawOutcome>;
+}
+
+/**
+ * Legacy-compatible input shape for registering tools/capabilities.
+ */
+export interface RegisterCapabilityInput {
+  id?: string;
+  name: string;
+  description: string;
+  category?: CapabilityCategory;
+  version?: string;
+  inputSchema: CapabilitySchema | Record<string, unknown>;
+  outputSchema: CapabilitySchema | Record<string, unknown>;
+  permissions?: string[];
+  requiredPermissions?: string[];
+  riskLevel?: CapabilityRiskLevel;
+  risk?: RiskLevel;
+  timeoutMs?: number;
+  enabled?: boolean;
+  trusted?: boolean;
+  validate?: (args: Record<string, unknown>) => string | null | ValidationResult;
+  isAvailable?: () => Promise<AvailabilityResult>;
+  execute: (args: Record<string, unknown>, ctx: CapabilityContext) => Promise<CapabilityRawOutcome>;
+}
+
+export interface CapabilityDiscoveryQuery {
+  query?: string;
+  category?: CapabilityCategory;
+  includeDisabled?: boolean;
+  maxRiskLevel?: CapabilityRiskLevel;
+  onlyAvailable?: boolean;
+}
+
+// Backward-compatible type aliases
+export type ToolContext = CapabilityContext;
+export type ToolExecutionResult = CapabilityResult;
+export type ToolDefinition = CapabilityDefinition;
+
+const RISK_ORDER: Record<CapabilityRiskLevel, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+};
+
+function toRiskEnum(level: CapabilityRiskLevel): RiskLevel {
+  if (level === 'high') return RiskLevel.HIGH;
+  if (level === 'medium') return RiskLevel.MEDIUM;
+  return RiskLevel.LOW;
+}
+
+function fromRiskEnum(risk: RiskLevel): CapabilityRiskLevel {
+  if (risk === RiskLevel.HIGH) return 'high';
+  if (risk === RiskLevel.MEDIUM) return 'medium';
+  return 'low';
+}
+
+/**
+ * Deterministic JSON-Schema-subset validator (zero external dependencies).
+ */
+export function validateAgainstSchema(value: unknown, schema: CapabilitySchema): ValidationResult {
+  const errors: string[] = [];
+
+  if (schema.type === 'object') {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return { valid: false, errors: ['Expected an object.'] };
+    }
+    const obj = value as Record<string, unknown>;
+
+    if (schema.required) {
+      for (const reqKey of schema.required) {
+        if (obj[reqKey] === undefined || obj[reqKey] === null || obj[reqKey] === '') {
+          errors.push(`Missing required field "${reqKey}".`);
+        }
+      }
+    }
+
+    if (schema.properties) {
+      for (const [key, propSchema] of Object.entries(schema.properties)) {
+        const val = obj[key];
+        if (val === undefined || val === null) continue;
+        const propErr = validateProperty(key, val, propSchema);
+        if (propErr) errors.push(propErr);
+      }
+    }
+
+    return { valid: errors.length === 0, errors };
+  }
+
+  if (schema.type === 'array') {
+    if (!Array.isArray(value)) {
+      return { valid: false, errors: ['Expected an array.'] };
+    }
+    if (schema.items) {
+      for (let i = 0; i < value.length; i++) {
+        const itemErr = validateProperty(`[${i}]`, value[i], schema.items);
+        if (itemErr) errors.push(itemErr);
+      }
+    }
+    return { valid: errors.length === 0, errors };
+  }
+
+  const actualType = Array.isArray(value) ? 'array' : typeof value;
+  if (actualType !== schema.type) {
+    errors.push(`Expected ${schema.type}, received ${actualType}.`);
+  }
+  return { valid: errors.length === 0, errors };
+}
+
+function validateProperty(
+  key: string,
+  val: unknown,
+  prop: CapabilitySchemaProperty
+): string | null {
+  if (prop.type === 'array') {
+    if (!Array.isArray(val)) return `Field "${key}" must be an array.`;
+    if (prop.items) {
+      for (let i = 0; i < val.length; i++) {
+        const err = validateProperty(`${key}[${i}]`, val[i], prop.items);
+        if (err) return err;
+      }
+    }
+    return null;
+  }
+
+  if (prop.type === 'object') {
+    if (!val || typeof val !== 'object' || Array.isArray(val)) {
+      return `Field "${key}" must be an object.`;
+    }
+    return null;
+  }
+
+  if (typeof val !== prop.type) {
+    return `Field "${key}" must be of type ${prop.type}.`;
+  }
+
+  if (prop.type === 'number' && Number.isNaN(val as number)) {
+    return `Field "${key}" must be a valid number.`;
+  }
+
+  if (prop.enum && typeof val === 'string' && !prop.enum.includes(val)) {
+    return `Field "${key}" must be one of: ${prop.enum.join(', ')}.`;
+  }
+
+  return null;
+}
+
+export class CapabilityRegistry {
+  private byId: Map<string, CapabilityDefinition> = new Map();
+  private idByName: Map<string, string> = new Map();
 
   constructor() {
     this.registerBuiltInTools();
   }
 
-  register(tool: ToolDefinition): void {
-    this.tools.set(tool.name, tool);
+  /**
+   * Register a capability safely. Prevents duplicate IDs or names.
+   * Untrusted capabilities are forced to HIGH risk so they cannot bypass SafetyGate.
+   */
+  register(input: RegisterCapabilityInput): CapabilityDefinition {
+    const name = input.name?.trim();
+    if (!name) {
+      throw new Error('Capability name is required.');
+    }
+
+    const id = (input.id || `custom.${name}`).trim();
+    if (!id) {
+      throw new Error('Capability id is required.');
+    }
+
+    if (this.byId.has(id)) {
+      throw new Error(`Duplicate capability id "${id}" is already registered.`);
+    }
+    if (this.idByName.has(name)) {
+      throw new Error(`Duplicate capability name "${name}" is already registered.`);
+    }
+
+    const trusted = input.trusted ?? false;
+    const declaredRisk: CapabilityRiskLevel =
+      input.riskLevel ?? (input.risk ? fromRiskEnum(input.risk) : 'medium');
+
+    // Security invariant: untrusted registrations can never self-declare low/medium risk
+    const enforcedRisk: CapabilityRiskLevel = trusted ? declaredRisk : 'high';
+    const permissions = [...(input.permissions ?? input.requiredPermissions ?? [])];
+    const inputSchema = input.inputSchema as CapabilitySchema;
+    const outputSchema = input.outputSchema as CapabilitySchema;
+    const customValidate = input.validate;
+
+    const capability: CapabilityDefinition = {
+      id,
+      name,
+      description: input.description,
+      category: input.category ?? 'general',
+      version: input.version ?? '1.0.0',
+      inputSchema,
+      outputSchema,
+      permissions,
+      requiredPermissions: permissions,
+      riskLevel: enforcedRisk,
+      risk: toRiskEnum(enforcedRisk),
+      timeoutMs: Math.max(500, input.timeoutMs ?? 5_000),
+      enabled: input.enabled ?? true,
+      trusted,
+      validate: (rawInput: unknown): ValidationResult => {
+        const schemaCheck = validateAgainstSchema(rawInput ?? {}, inputSchema);
+        if (!schemaCheck.valid) return schemaCheck;
+
+        if (customValidate) {
+          const customRes = customValidate((rawInput ?? {}) as Record<string, unknown>);
+          if (typeof customRes === 'string') {
+            return { valid: false, errors: [customRes] };
+          }
+          if (customRes && typeof customRes === 'object' && 'valid' in customRes) {
+            return customRes;
+          }
+        }
+        return { valid: true, errors: [] };
+      },
+      isAvailable: input.isAvailable ?? (async () => ({ available: true })),
+      execute: input.execute,
+    };
+
+    this.byId.set(id, capability);
+    this.idByName.set(name, id);
+    return capability;
   }
 
-  get(name: string): ToolDefinition | undefined {
-    return this.tools.get(name);
+  /**
+   * Unregister a capability by ID or name.
+   */
+  unregister(idOrName: string): boolean {
+    const cap = this.get(idOrName);
+    if (!cap) return false;
+    this.byId.delete(cap.id);
+    this.idByName.delete(cap.name);
+    return true;
   }
 
-  list(): ToolDefinition[] {
-    return Array.from(this.tools.values());
+  /**
+   * Look up a capability by stable ID or legacy tool name.
+   */
+  get(idOrName: string): CapabilityDefinition | undefined {
+    if (this.byId.has(idOrName)) return this.byId.get(idOrName);
+    const mappedId = this.idByName.get(idOrName);
+    return mappedId ? this.byId.get(mappedId) : undefined;
+  }
+
+  getById(id: string): CapabilityDefinition | undefined {
+    return this.byId.get(id);
+  }
+
+  enable(idOrName: string): boolean {
+    const cap = this.get(idOrName);
+    if (!cap) return false;
+    cap.enabled = true;
+    return true;
+  }
+
+  disable(idOrName: string): boolean {
+    const cap = this.get(idOrName);
+    if (!cap) return false;
+    cap.enabled = false;
+    return true;
+  }
+
+  list(): CapabilityDefinition[] {
+    return Array.from(this.byId.values());
+  }
+
+  listEnabled(): CapabilityDefinition[] {
+    return this.list().filter((c) => c.enabled);
+  }
+
+  /**
+   * Discover capabilities by query text, category, risk ceiling, and availability.
+   */
+  async discover(filter: CapabilityDiscoveryQuery = {}): Promise<CapabilityDefinition[]> {
+    const queryLower = filter.query?.trim().toLowerCase();
+    const keywords = queryLower ? queryLower.split(/\s+/).filter((w) => w.length > 1) : [];
+
+    const candidates = this.list().filter((cap) => {
+      if (!filter.includeDisabled && !cap.enabled) return false;
+      if (filter.category && cap.category !== filter.category) return false;
+      if (filter.maxRiskLevel && RISK_ORDER[cap.riskLevel] > RISK_ORDER[filter.maxRiskLevel]) {
+        return false;
+      }
+      if (keywords.length > 0) {
+        const haystack = `${cap.id} ${cap.name} ${cap.description} ${cap.category}`.toLowerCase();
+        const matches = keywords.some((kw) => haystack.includes(kw));
+        if (!matches) return false;
+      }
+      return true;
+    });
+
+    if (!filter.onlyAvailable) {
+      return candidates;
+    }
+
+    const availableList: CapabilityDefinition[] = [];
+    for (const cap of candidates) {
+      try {
+        const avail = await cap.isAvailable();
+        if (avail.available) availableList.push(cap);
+      } catch {
+        // Unavailable if probe throws
+      }
+    }
+    return availableList;
   }
 
   toOllamaSchemas(): OllamaToolSchema[] {
-    return this.list().map((t) => ({
+    return this.listEnabled().map((t) => ({
       type: 'function',
       function: {
         name: t.name,
         description: t.description,
-        parameters: t.inputSchema,
+        parameters: t.inputSchema as unknown as Record<string, unknown>,
       },
     }));
   }
 
   /**
-   * Full tool execution lifecycle:
-   * Lookup -> Argument Validation -> Permission & Risk Check ->
-   * Bounded Timeout Execution -> Result Verification -> Audit Log.
+   * Full execution lifecycle:
+   * Lookup -> Enabled check -> Availability check -> Input schema validation ->
+   * Permission & Risk check -> Bounded Timeout Execution ->
+   * Output schema validation -> Audit Log.
    */
   async execute(
-    name: string,
+    idOrName: string,
     args: Record<string, unknown>,
-    ctx: ToolContext = { actor: 'user' }
-  ): Promise<ToolExecutionResult> {
+    ctx: CapabilityContext = { actor: 'user' }
+  ): Promise<CapabilityResult> {
     const started = Date.now();
-    const tool = this.tools.get(name);
+    const cap = this.get(idOrName);
     const store = await getMemoryStore();
 
-    if (!tool) {
+    if (!cap) {
       return {
-        tool: name,
+        capabilityId: idOrName,
+        tool: idOrName,
+        taskId: ctx.taskId,
         success: false,
         verified: false,
-        message: `Unknown tool "${name}".`,
-        error: `Tool "${name}" is not registered.`,
+        message: `Unknown capability "${idOrName}".`,
+        error: `Capability "${idOrName}" is not registered.`,
         durationMs: Date.now() - started,
       };
     }
 
-    const validationError = tool.validate(args || {});
-    if (validationError) {
-      store.logAudit(ctx.actor, `tool:${name}`, JSON.stringify(args), tool.risk, false, validationError);
+    if (!cap.enabled) {
+      store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, false, 'Capability disabled');
       return {
-        tool: name,
+        capabilityId: cap.id,
+        tool: cap.name,
+        taskId: ctx.taskId,
         success: false,
         verified: false,
-        message: `Invalid arguments for ${name}: ${validationError}`,
-        error: validationError,
+        message: `Capability "${cap.name}" is currently disabled.`,
+        error: 'Capability disabled',
         durationMs: Date.now() - started,
       };
+    }
+
+    const validation = cap.validate(args ?? {});
+    if (!validation.valid) {
+      const errText = validation.errors.join(' ');
+      store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, false, errText);
+      return {
+        capabilityId: cap.id,
+        tool: cap.name,
+        taskId: ctx.taskId,
+        success: false,
+        verified: false,
+        message: `Invalid arguments for ${cap.name}: ${errText}`,
+        error: errText,
+        durationMs: Date.now() - started,
+      };
+    }
+
+    // Enforce grantedPermissions when caller/planner provides scoped permissions
+    if (ctx.grantedPermissions) {
+      const missing = cap.permissions.filter((p) => !ctx.grantedPermissions!.includes(p));
+      if (missing.length > 0) {
+        const msg = `Permission denied for "${cap.name}". Missing: ${missing.join(', ')}`;
+        store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, false, msg);
+        return {
+          capabilityId: cap.id,
+          tool: cap.name,
+          taskId: ctx.taskId,
+          success: false,
+          verified: false,
+          message: msg,
+          error: msg,
+          durationMs: Date.now() - started,
+        };
+      }
     }
 
     const config = getConfig();
-    if (tool.risk === RiskLevel.HIGH && config.requireHighRiskApproval && !ctx.approvedHighRisk) {
-      store.logAudit(ctx.actor, `tool:${name}`, JSON.stringify(args), tool.risk, false, 'Requires explicit approval');
+    if (cap.risk === RiskLevel.HIGH && config.requireHighRiskApproval && !ctx.approvedHighRisk) {
+      store.logAudit(
+        ctx.actor,
+        `capability:${cap.id}`,
+        JSON.stringify(args),
+        cap.risk,
+        false,
+        'Requires explicit approval'
+      );
       return {
-        tool: name,
+        capabilityId: cap.id,
+        tool: cap.name,
+        taskId: ctx.taskId,
         success: false,
         verified: false,
         requiresApproval: true,
-        message: `Tool "${name}" is classified as high-risk and requires explicit user approval before execution.`,
+        message: `Capability "${cap.name}" is classified as high-risk and requires explicit user approval before execution.`,
         durationMs: Date.now() - started,
       };
     }
 
     try {
-      const execPromise = tool.execute(args || {}, ctx);
+      const availability = await cap.isAvailable();
+      if (!availability.available) {
+        const reason = availability.reason || `Capability "${cap.name}" is currently unavailable.`;
+        store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, false, reason);
+        return {
+          capabilityId: cap.id,
+          tool: cap.name,
+          taskId: ctx.taskId,
+          success: false,
+          verified: false,
+          message: reason,
+          error: reason,
+          durationMs: Date.now() - started,
+        };
+      }
+
+      const execPromise = cap.execute(args ?? {}, ctx);
       const timeoutPromise = new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${tool.timeoutMs}ms`)), tool.timeoutMs)
+        setTimeout(() => reject(new Error(`Capability "${cap.name}" timed out after ${cap.timeoutMs}ms`)), cap.timeoutMs)
       );
 
       const outcome = await Promise.race([execPromise, timeoutPromise]);
       const durationMs = Date.now() - started;
 
-      store.logAudit(ctx.actor, `tool:${name}`, JSON.stringify(args), tool.risk, outcome.verified, outcome.message);
+      // Validate output schema when data is returned and outcome claims verified
+      if (outcome.verified && outcome.data !== undefined) {
+        const outValidation = validateAgainstSchema(outcome.data, cap.outputSchema);
+        if (!outValidation.valid) {
+          const outErr = `Output schema validation failed: ${outValidation.errors.join(' ')}`;
+          store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, false, outErr);
+          return {
+            capabilityId: cap.id,
+            tool: cap.name,
+            taskId: ctx.taskId,
+            success: false,
+            verified: false,
+            message: `Execution output for "${cap.name}" failed schema verification.`,
+            error: outErr,
+            durationMs,
+          };
+        }
+      }
+
+      store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, outcome.verified, outcome.message);
 
       return {
-        tool: name,
+        capabilityId: cap.id,
+        tool: cap.name,
+        taskId: ctx.taskId,
         success: outcome.verified,
         verified: outcome.verified,
         data: outcome.data,
         message: outcome.message,
+        provenance: outcome.provenance ?? {
+          source: cap.id,
+          timestamp: new Date().toISOString(),
+        },
         durationMs,
       };
     } catch (err) {
       const durationMs = Date.now() - started;
-      const errMsg = (err as Error).message || 'Tool execution failed';
-      log.error(`Tool ${name} failed`, { error: errMsg });
-      store.logAudit(ctx.actor, `tool:${name}`, JSON.stringify(args), tool.risk, false, errMsg);
+      const errMsg = (err as Error).message || 'Capability execution failed';
+      log.error(`Capability ${cap.id} failed`, { error: errMsg });
+      store.logAudit(ctx.actor, `capability:${cap.id}`, JSON.stringify(args), cap.risk, false, errMsg);
       return {
-        tool: name,
+        capabilityId: cap.id,
+        tool: cap.name,
+        taskId: ctx.taskId,
         success: false,
         verified: false,
-        message: `Failed to execute ${name}: ${errMsg}`,
+        message: `Failed to execute ${cap.name}: ${errMsg}`,
         error: errMsg,
         durationMs,
       };
@@ -163,17 +611,28 @@ export class ToolRegistry {
 
   private registerBuiltInTools(): void {
     this.register({
+      id: 'core.time.get_current_time',
       name: 'get_current_time',
       description: 'Get the current date and time in the configured timezone.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:time'],
+      category: 'system',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:time'],
       timeoutMs: 2_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { timezone: { type: 'string' } } },
-      outputSchema: { type: 'object', properties: { iso: { type: 'string' }, formatted: { type: 'string' }, timezone: { type: 'string' } } },
-      validate: () => null,
+      outputSchema: {
+        type: 'object',
+        properties: { iso: { type: 'string' }, formatted: { type: 'string' }, timezone: { type: 'string' } },
+        required: ['iso', 'formatted', 'timezone'],
+      },
       execute: async (args, ctx) => {
         const store = await getMemoryStore();
-        const tz = (typeof args.timezone === 'string' && args.timezone) || ctx.timezone || store.getPersonalityProfile().timezone || 'UTC';
+        const tz =
+          (typeof args.timezone === 'string' && args.timezone) ||
+          ctx.timezone ||
+          store.getPersonalityProfile().timezone ||
+          'Asia/Kolkata';
         const now = new Date();
         let formatted: string;
         try {
@@ -194,14 +653,17 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.system.get_system_status',
       name: 'get_system_status',
       description: 'Get overall FRIDAY status including Ollama, Claw runtime, active watchers, and pending reminders.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:status'],
+      category: 'system',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:status'],
       timeoutMs: 5_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: {} },
-      outputSchema: { type: 'object' },
-      validate: () => null,
+      outputSchema: { type: 'object', required: ['ollama', 'clawAvailable', 'activeWatchers', 'pendingReminders'] },
       execute: async () => {
         const store = await getMemoryStore();
         const ollama = await getOllamaClient().checkStatus();
@@ -228,14 +690,17 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.system.check_ollama_status',
       name: 'check_ollama_status',
       description: 'Check whether the local Ollama server is reachable and if the configured model is installed.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:status'],
+      category: 'system',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:status'],
       timeoutMs: 4_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: {} },
-      outputSchema: { type: 'object' },
-      validate: () => null,
+      outputSchema: { type: 'object', required: ['reachable', 'baseUrl', 'configuredModel'] },
       execute: async () => {
         const status = await getOllamaClient().checkStatus();
         return {
@@ -251,17 +716,21 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.check_server_health',
       name: 'check_server_health',
       description: 'Probe a specific HTTP/HTTPS server or health endpoint once and return status and latency.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['network:probe'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['network:probe'],
       timeoutMs: 10_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: { url: { type: 'string' } },
         required: ['url'],
       },
-      outputSchema: { type: 'object' },
+      outputSchema: { type: 'object', required: ['url', 'ok'] },
       validate: (args) => {
         if (typeof args.url !== 'string' || !args.url.trim()) return 'url is required';
         try {
@@ -294,11 +763,15 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.scheduler.create_reminder',
       name: 'create_reminder',
       description: 'Create a one-time, recurring, or location-triggered reminder.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:reminders'],
+      category: 'scheduler',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:reminders'],
       timeoutMs: 5_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: {
@@ -311,7 +784,7 @@ export class ToolRegistry {
         },
         required: ['title'],
       },
-      outputSchema: { type: 'object' },
+      outputSchema: { type: 'object', required: ['id', 'title', 'status'] },
       validate: (args) => {
         if (typeof args.title !== 'string' || !args.title.trim()) return 'title is required';
         if (args.dueAt && Number.isNaN(new Date(String(args.dueAt)).getTime())) {
@@ -351,20 +824,26 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.scheduler.create_alarm',
       name: 'create_alarm',
       description: 'Create an alarm at a specific date and time.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:reminders'],
+      category: 'scheduler',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:reminders'],
       timeoutMs: 5_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: { title: { type: 'string' }, dueAt: { type: 'string' } },
         required: ['title', 'dueAt'],
       },
-      outputSchema: { type: 'object' },
+      outputSchema: { type: 'object', required: ['id', 'title', 'isAlarm'] },
       validate: (args) => {
         if (typeof args.title !== 'string' || !args.title.trim()) return 'title is required';
-        if (typeof args.dueAt !== 'string' || Number.isNaN(new Date(args.dueAt).getTime())) return 'valid dueAt is required';
+        if (typeof args.dueAt !== 'string' || Number.isNaN(new Date(args.dueAt).getTime())) {
+          return 'valid dueAt is required';
+        }
         return null;
       },
       execute: async (args) => {
@@ -382,14 +861,17 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.scheduler.list_reminders',
       name: 'list_reminders',
       description: 'List reminders and alarms, optionally filtered by status.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:reminders'],
+      category: 'scheduler',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:reminders'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { status: { type: 'string' } } },
       outputSchema: { type: 'array' },
-      validate: () => null,
       execute: async (args) => {
         const list = await getSchedulerService().listReminders(args.status as any);
         return {
@@ -404,11 +886,15 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.scheduler.update_reminder',
       name: 'update_reminder',
       description: 'Update an existing reminder title, time, or status.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:reminders'],
+      category: 'scheduler',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:reminders'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: {
@@ -419,8 +905,7 @@ export class ToolRegistry {
         },
         required: ['id'],
       },
-      outputSchema: { type: 'object' },
-      validate: (args) => (typeof args.id === 'string' && args.id.trim() ? null : 'id is required'),
+      outputSchema: { type: 'object', required: ['id', 'title'] },
       execute: async (args) => {
         const updated = await getSchedulerService().updateReminder(String(args.id), {
           title: typeof args.title === 'string' ? args.title : undefined,
@@ -433,14 +918,17 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.scheduler.delete_reminder',
       name: 'delete_reminder',
       description: 'Delete a reminder by ID.',
-      risk: RiskLevel.MEDIUM,
-      requiredPermissions: ['write:reminders'],
+      category: 'scheduler',
+      version: '1.0.0',
+      riskLevel: 'medium',
+      permissions: ['write:reminders'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] },
-      outputSchema: { type: 'object' },
-      validate: (args) => (typeof args.id === 'string' && args.id.trim() ? null : 'id is required'),
+      outputSchema: { type: 'object', required: ['deleted'] },
       execute: async (args) => {
         const deleted = await getSchedulerService().deleteReminder(String(args.id));
         return {
@@ -452,11 +940,15 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.start_dashboard_watch',
       name: 'start_dashboard_watch',
       description: 'Create and start a persistent monitoring watcher for a dashboard, URL, API, or service.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:watchers'],
       timeoutMs: 12_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: {
@@ -469,8 +961,7 @@ export class ToolRegistry {
           isDefault: { type: 'boolean' },
         },
       },
-      outputSchema: { type: 'object' },
-      validate: () => null,
+      outputSchema: { type: 'object', required: ['id', 'name', 'status', 'workerRunning'] },
       execute: async (args) => {
         const monitoring = getMonitoringEngine();
         const config = getConfig();
@@ -488,7 +979,6 @@ export class ToolRegistry {
               message: `Watcher "${def.name}" (${def.targetUrl}) is active and verified (${verified?.health}).`,
             };
           }
-          // Default to FRIDAY's own local dashboard health endpoint if no default was configured yet
           targetUrl = `http://${config.host}:${config.port}/friday/health`;
           name = name || 'FRIDAY Dashboard';
         }
@@ -514,19 +1004,23 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.stop_dashboard_watch',
       name: 'stop_dashboard_watch',
       description: 'Stop an active dashboard or service watcher.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:watchers'],
       timeoutMs: 5_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { idOrName: { type: 'string' } } },
-      outputSchema: { type: 'object' },
-      validate: () => null,
+      outputSchema: { type: 'object', required: ['id'] },
       execute: async (args) => {
         const monitoring = getMonitoringEngine();
-        const target = typeof args.idOrName === 'string' && args.idOrName
-          ? await monitoring.getWatcher(args.idOrName)
-          : await monitoring.getDefaultWatcher();
+        const target =
+          typeof args.idOrName === 'string' && args.idOrName
+            ? await monitoring.getWatcher(args.idOrName)
+            : await monitoring.getDefaultWatcher();
         if (!target) return { verified: false, message: 'No matching watcher found to stop.' };
         const ok = await monitoring.stopWatcher(target.id);
         return { verified: ok, data: { id: target.id }, message: `Stopped monitoring "${target.name}".` };
@@ -534,19 +1028,23 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.pause_dashboard_watch',
       name: 'pause_dashboard_watch',
       description: 'Pause an active dashboard or service watcher.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:watchers'],
       timeoutMs: 5_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { idOrName: { type: 'string' } } },
-      outputSchema: { type: 'object' },
-      validate: () => null,
+      outputSchema: { type: 'object', required: ['id'] },
       execute: async (args) => {
         const monitoring = getMonitoringEngine();
-        const target = typeof args.idOrName === 'string' && args.idOrName
-          ? await monitoring.getWatcher(args.idOrName)
-          : await monitoring.getDefaultWatcher();
+        const target =
+          typeof args.idOrName === 'string' && args.idOrName
+            ? await monitoring.getWatcher(args.idOrName)
+            : await monitoring.getDefaultWatcher();
         if (!target) return { verified: false, message: 'No matching watcher found to pause.' };
         const ok = await monitoring.pauseWatcher(target.id);
         return { verified: ok, data: { id: target.id }, message: `Paused monitoring "${target.name}".` };
@@ -554,19 +1052,23 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.resume_dashboard_watch',
       name: 'resume_dashboard_watch',
       description: 'Resume a paused dashboard or service watcher.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:watchers'],
       timeoutMs: 10_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { idOrName: { type: 'string' } } },
-      outputSchema: { type: 'object' },
-      validate: () => null,
+      outputSchema: { type: 'object', required: ['id', 'workerRunning'] },
       execute: async (args) => {
         const monitoring = getMonitoringEngine();
-        const target = typeof args.idOrName === 'string' && args.idOrName
-          ? await monitoring.getWatcher(args.idOrName)
-          : await monitoring.getDefaultWatcher();
+        const target =
+          typeof args.idOrName === 'string' && args.idOrName
+            ? await monitoring.getWatcher(args.idOrName)
+            : await monitoring.getDefaultWatcher();
         if (!target) return { verified: false, message: 'No matching watcher found to resume.' };
         const ok = await monitoring.resumeWatcher(target.id);
         const updated = await monitoring.getWatcher(target.id);
@@ -579,19 +1081,23 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.get_dashboard_watch_status',
       name: 'get_dashboard_watch_status',
       description: 'Get the current health and worker status of a specific dashboard watcher.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:watchers'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: { idOrName: { type: 'string' } } },
       outputSchema: { type: 'object' },
-      validate: () => null,
       execute: async (args) => {
         const monitoring = getMonitoringEngine();
-        const target = typeof args.idOrName === 'string' && args.idOrName
-          ? await monitoring.getWatcher(args.idOrName)
-          : await monitoring.getDefaultWatcher();
+        const target =
+          typeof args.idOrName === 'string' && args.idOrName
+            ? await monitoring.getWatcher(args.idOrName)
+            : await monitoring.getDefaultWatcher();
         if (!target) return { verified: true, message: 'No dashboard watcher is configured yet.' };
         return {
           verified: true,
@@ -602,14 +1108,17 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.list_dashboard_watchers',
       name: 'list_dashboard_watchers',
       description: 'List all configured dashboard and service watchers.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:watchers'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: {} },
       outputSchema: { type: 'array' },
-      validate: () => null,
       execute: async () => {
         const list = await getMonitoringEngine().listWatchers();
         return {
@@ -624,17 +1133,20 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.monitoring.get_monitoring_history',
       name: 'get_monitoring_history',
       description: 'Retrieve recent monitoring checks and alerts (for example yesterday or today alerts).',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:watchers'],
+      category: 'monitoring',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:watchers'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: { watcherId: { type: 'string' }, sinceIso: { type: 'string' }, limit: { type: 'number' } },
       },
       outputSchema: { type: 'array' },
-      validate: () => null,
       execute: async (args) => {
         const history = await getMonitoringEngine().getHistory(
           typeof args.watcherId === 'string' ? args.watcherId : undefined,
@@ -644,20 +1156,26 @@ export class ToolRegistry {
         return {
           verified: true,
           data: history,
-          message: history.length === 0 ? 'No monitoring check history found for that period.' : `Retrieved ${history.length} monitoring check record(s).`,
+          message:
+            history.length === 0
+              ? 'No monitoring check history found for that period.'
+              : `Retrieved ${history.length} monitoring check record(s).`,
         };
       },
     });
 
     this.register({
+      id: 'core.location.get_location_status',
       name: 'get_location_status',
       description: 'List saved geofence locations and location-based reminder status.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['read:locations'],
+      category: 'location',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['read:locations'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: { type: 'object', properties: {} },
       outputSchema: { type: 'array' },
-      validate: () => null,
       execute: async () => {
         const locations = await getLocationService().listLocations();
         return {
@@ -672,11 +1190,15 @@ export class ToolRegistry {
     });
 
     this.register({
+      id: 'core.notifications.send_notification',
       name: 'send_notification',
       description: 'Create and broadcast a FRIDAY notification to the dashboard and paired devices.',
-      risk: RiskLevel.LOW,
-      requiredPermissions: ['write:notifications'],
+      category: 'notifications',
+      version: '1.0.0',
+      riskLevel: 'low',
+      permissions: ['write:notifications'],
       timeoutMs: 3_000,
+      trusted: true,
       inputSchema: {
         type: 'object',
         properties: {
@@ -709,10 +1231,18 @@ export class ToolRegistry {
   }
 }
 
-let _registry: ToolRegistry | null = null;
-export function getToolRegistry(): ToolRegistry {
+// Backward-compatible class & singleton aliases
+export const ToolRegistry = CapabilityRegistry;
+export type ToolRegistry = CapabilityRegistry;
+
+let _registry: CapabilityRegistry | null = null;
+export function getCapabilityRegistry(): CapabilityRegistry {
   if (!_registry) {
-    _registry = new ToolRegistry();
+    _registry = new CapabilityRegistry();
   }
   return _registry;
+}
+
+export function getToolRegistry(): CapabilityRegistry {
+  return getCapabilityRegistry();
 }
