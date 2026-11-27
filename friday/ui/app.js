@@ -126,7 +126,9 @@
         body: JSON.stringify({ text }),
       });
       const reply = res.output || res.error || 'Done.';
-      appendMessage('assistant', reply, `${res.executor} · ${res.durationMs}ms`);
+      const decisionTag = res.executiveDecision ? ` · ${res.executiveDecision}` : '';
+      const intentTag = res.assistantRequest?.intent ? ` · intent:${res.assistantRequest.intent}` : '';
+      appendMessage('assistant', reply, `${res.executor}${decisionTag}${intentTag} · ${res.durationMs}ms`);
       refreshAll();
     } catch (err) {
       appendMessage('assistant', `Error: ${err.message}`);

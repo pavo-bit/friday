@@ -16,34 +16,127 @@ import { getMonitoringEngine } from '../services/monitoringEngine';
 import { getSchedulerService } from '../services/schedulerService';
 import { getIntentParser } from '../intelligence/intentParser';
 import { getTaskRouter } from './taskRouter';
+import { getRequestUnderstandingEngine, AssistantRequest } from './requestUnderstanding';
+import {
+  getContextResolutionEngine,
+  shouldPersistConversationToMemory,
+} from './contextResolution';
+import { getClarificationEngine } from './clarificationEngine';
+import { synthesizeTaskOutcome } from './resultSynthesizer';
 import { ActionType, RiskLevel, TaskResult } from '../shared/types';
 import { createLayerLogger } from '../shared/logger';
 
 const log = createLayerLogger('AssistantBrain');
 
+export type ExecutiveDecision =
+  | 'ANSWER_DIRECTLY'
+  | 'ASK_CLARIFICATION'
+  | 'DISCOVER_CAPABILITIES'
+  | 'EXECUTE_PLAN'
+  | 'RESUME_TASK'
+  | 'REQUEST_APPROVAL'
+  | 'SYNTHESIZE_RESULTS'
+  | 'HANDLE_FAILURE';
+
+export interface AssistantProcessOptions {
+  actorId?: string;
+  grantedPermissions?: readonly string[];
+}
+
+export interface AssistantProcessResponse extends TaskResult {
+  toolResult?: ToolExecutionResult;
+  plan?: ExecutionPlan;
+  backgroundTaskId?: string;
+  executiveDecision?: ExecutiveDecision;
+  assistantRequest?: AssistantRequest;
+  clarificationNeeded?: string;
+  timingsMs?: {
+    understanding: number;
+    context: number;
+    planning: number;
+    total: number;
+  };
+}
+
 export class AssistantBrain {
   /**
-   * Process natural-language input through the full FRIDAY lifecycle:
-   * Context load -> Deterministic tool / NLU match OR Ollama tool-calling ->
-   * Verified execution -> Personality formatting -> Memory logging.
+   * Process natural-language input through the Phase 10 Executive Brain lifecycle:
+   * Clarification Check -> Request Understanding -> Context Resolution ->
+   * Executive Decision -> Discovery/Planning/Execution -> Verification & Synthesis.
    */
   async process(
     text: string,
     sessionId?: string,
-    approvedHighRisk = false
-  ): Promise<TaskResult & { toolResult?: ToolExecutionResult; plan?: ExecutionPlan; backgroundTaskId?: string }> {
+    approvedHighRisk = false,
+    options?: AssistantProcessOptions
+  ): Promise<AssistantProcessResponse> {
     const startTime = Date.now();
     const intentId = uuidv4();
     const store = await getMemoryStore();
     const personality = getPersonalityEngine();
     const profile = store.getPersonalityProfile();
     const registry = getToolRegistry();
-    const trimmed = text.trim();
+    const actorId = options?.actorId || 'local';
+    const conversationId = sessionId || 'default';
+    let effectiveText = text.trim();
 
-    store.logConversation('user', trimmed, undefined, sessionId);
+    const memoryPolicy = shouldPersistConversationToMemory(effectiveText);
+    if (memoryPolicy.allow) {
+      store.logConversation('user', effectiveText, undefined, sessionId);
+    }
 
-    // 1. Greetings, Compound Greeting+Command requests & Farewells
-    const greetingPrefixMatch = trimmed.match(
+    // 0. Clarification resumption (clarification NEVER grants approval/permission)
+    const clarificationEngine = getClarificationEngine();
+    const pendingClarification = clarificationEngine.consumeAndMerge(
+      actorId,
+      conversationId,
+      effectiveText
+    );
+    if (pendingClarification) {
+      effectiveText = pendingClarification.mergedRequest;
+    }
+
+    // 1. Request Understanding
+    const tUnderstandStart = Date.now();
+    const understood = getRequestUnderstandingEngine().understand({
+      rawInput: effectiveText,
+      actorId,
+      conversationId,
+      hasPendingClarification: false,
+    });
+    const understandingMs = Date.now() - tUnderstandStart;
+
+    // 2. Underspecified / ambiguous request -> ask one concise clarification question
+    if (understood.missingInformation.length > 0 && !pendingClarification) {
+      const question = `Could you clarify the ${understood.missingInformation.join(' and ')} before I proceed, ${profile.userName}?`;
+      clarificationEngine.setPending({
+        actorId,
+        conversationId,
+        originalRequest: effectiveText,
+        missingFields: understood.missingInformation,
+        question,
+      });
+      const res = await this.finish(
+        intentId,
+        effectiveText,
+        question,
+        false,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return {
+        ...res,
+        executiveDecision: 'ASK_CLARIFICATION',
+        assistantRequest: understood,
+        clarificationNeeded: question,
+        timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
+      };
+    }
+
+    // 3. Greetings, Compound Greeting+Command requests & Farewells
+    const greetingPrefixMatch = effectiveText.match(
       /^(?:(?:hi|hello|hey|good\s*(?:morning|afternoon|evening|night)|yo|greetings)(?:\s*,?\s*friday)?[!.,\s]*)(.*)$/i
     );
     if (greetingPrefixMatch) {
@@ -61,16 +154,29 @@ export class AssistantBrain {
         allSystemsHealthy: unhealthy === 0 && ollama.reachable,
       });
 
-      // Pure greeting -> return greeting directly
       if (!remainder || remainder.length < 3) {
-        return this.finish(intentId, trimmed, greetingText, true, 'internal', RiskLevel.LOW, startTime, sessionId);
+        const res = await this.finish(
+          intentId,
+          effectiveText,
+          greetingText,
+          true,
+          'internal',
+          RiskLevel.LOW,
+          startTime,
+          sessionId
+        );
+        return {
+          ...res,
+          executiveDecision: 'ANSWER_DIRECTLY',
+          assistantRequest: understood,
+          timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
+        };
       }
 
-      // Compound request ("Good morning FRIDAY, what is my system status?")
       const compoundTool = this.matchDirectTool(remainder, profile.timezone);
       if (compoundTool) {
         const toolRes = await registry.execute(compoundTool.tool, compoundTool.args, {
-          actor: 'user',
+          actor: actorId,
           approvedHighRisk,
           timezone: profile.timezone,
         });
@@ -80,7 +186,7 @@ export class AssistantBrain {
         const combined = `${greetingText}\n\n${actionText}`;
         const res = await this.finish(
           intentId,
-          trimmed,
+          effectiveText,
           combined,
           toolRes.success,
           'internal',
@@ -88,28 +194,103 @@ export class AssistantBrain {
           startTime,
           sessionId
         );
-        return { ...res, toolResult: toolRes };
+        return {
+          ...res,
+          toolResult: toolRes,
+          executiveDecision: 'EXECUTE_PLAN',
+          assistantRequest: understood,
+          timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
+        };
       }
     }
 
-    if (/^(bye|goodbye|see\s*you|good\s*night)\b/i.test(trimmed) && trimmed.length < 40) {
-      const output = personality.buildFarewell(profile, trimmed);
-      return this.finish(intentId, trimmed, output, true, 'internal', RiskLevel.LOW, startTime, sessionId);
+    if (understood.intent === 'farewell') {
+      const output = personality.buildFarewell(profile, effectiveText);
+      const res = await this.finish(
+        intentId,
+        effectiveText,
+        output,
+        true,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return {
+        ...res,
+        executiveDecision: 'ANSWER_DIRECTLY',
+        assistantRequest: understood,
+        timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
+      };
     }
 
-    // 1.5 Structured Capability Discovery & Multi-Tool Planning (deterministic fast path)
+    // 4. Bounded Context Resolution
+    const tCtxStart = Date.now();
+    const ctxEngine = getContextResolutionEngine();
+    const boundedCtx = await ctxEngine.resolve(understood);
+    const contextMs = Date.now() - tCtxStart;
+
+    // 5. Task Resume & Follow-Up Continuity
+    if (understood.intent === 'task_resume') {
+      const resolvedTask = ctxEngine.resolveFollowUpTask(boundedCtx, 'active_or_waiting');
+      if (!resolvedTask.resolved) {
+        const msg = resolvedTask.clarification || 'No paused task found to resume.';
+        const res = await this.finish(intentId, effectiveText, msg, false, 'internal', RiskLevel.LOW, startTime, sessionId);
+        return {
+          ...res,
+          executiveDecision: resolvedTask.ambiguous ? 'ASK_CLARIFICATION' : 'HANDLE_FAILURE',
+          assistantRequest: understood,
+          clarificationNeeded: resolvedTask.ambiguous ? msg : undefined,
+          timingsMs: { understanding: understandingMs, context: contextMs, planning: 0, total: Date.now() - startTime },
+        };
+      }
+      const task = await getBackgroundOrchestrator().getTask(resolvedTask.taskId!, actorId);
+      const msg = task
+        ? `Task "${task.originalRequest}" (${task.id}) is currently ${task.status} (${task.progress}%).${task.status === 'WAITING_FOR_APPROVAL' ? ' Please approve or reject the pending bound approval to continue.' : ''}`
+        : 'Task not found.';
+      const res = await this.finish(intentId, effectiveText, msg, Boolean(task), 'internal', RiskLevel.LOW, startTime, sessionId);
+      return {
+        ...res,
+        backgroundTaskId: task?.id,
+        executiveDecision: 'RESUME_TASK',
+        assistantRequest: understood,
+        timingsMs: { understanding: understandingMs, context: contextMs, planning: 0, total: Date.now() - startTime },
+      };
+    }
+
+    if (understood.intent === 'follow_up' && boundedCtx.recentPresentations.length > 0) {
+      const latestPres = boundedCtx.recentPresentations[0];
+      const msg = `Following up on "${latestPres.title}" (${latestPres.verificationStatus}): ${latestPres.summary}`;
+      const res = await this.finish(intentId, effectiveText, msg, true, 'internal', RiskLevel.LOW, startTime, sessionId);
+      return {
+        ...res,
+        executiveDecision: 'SYNTHESIZE_RESULTS',
+        assistantRequest: understood,
+        timingsMs: { understanding: understandingMs, context: contextMs, planning: 0, total: Date.now() - startTime },
+      };
+    }
+
+    // 6. Structured Capability Discovery & Multi-Tool Planning
+    const tPlanStart = Date.now();
     const discovery = await getCapabilityDiscoveryEngine().discover({
-      request: trimmed,
+      request: effectiveText,
       conversationId: sessionId,
-      conversationHistory: store.getRecentConversations(6, sessionId),
+      conversationHistory: boundedCtx.recentMessages.map((m) => ({ role: m.role, content: m.content })),
       timezone: profile.timezone,
       useLlmFallback: false,
     });
 
     if (discovery.clarificationNeeded && discovery.matched.length <= 1) {
-      return this.finish(
+      clarificationEngine.setPending({
+        actorId,
+        conversationId,
+        originalRequest: effectiveText,
+        missingFields: discovery.missingInputs.flatMap((m) => m.fields),
+        question: discovery.clarificationNeeded,
+      });
+      const res = await this.finish(
         intentId,
-        trimmed,
+        effectiveText,
         discovery.clarificationNeeded,
         false,
         'internal',
@@ -117,15 +298,57 @@ export class AssistantBrain {
         startTime,
         sessionId
       );
+      return {
+        ...res,
+        executiveDecision: 'ASK_CLARIFICATION',
+        assistantRequest: understood,
+        clarificationNeeded: discovery.clarificationNeeded,
+        timingsMs: {
+          understanding: understandingMs,
+          context: contextMs,
+          planning: Date.now() - tPlanStart,
+          total: Date.now() - startTime,
+        },
+      };
+    }
+
+    if (discovery.unavailable.length > 0 && discovery.matched.length === 0) {
+      const synth = synthesizeTaskOutcome({
+        userName: profile.userName,
+        steps: [],
+        unavailableCapabilities: discovery.unavailable.map((u) => u.name),
+      });
+      const res = await this.finish(
+        intentId,
+        effectiveText,
+        synth.summary,
+        false,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return {
+        ...res,
+        executiveDecision: 'HANDLE_FAILURE',
+        assistantRequest: understood,
+        timingsMs: {
+          understanding: understandingMs,
+          context: contextMs,
+          planning: Date.now() - tPlanStart,
+          total: Date.now() - startTime,
+        },
+      };
     }
 
     if (discovery.matched.length > 1) {
       const plan = await getToolPlanner().createPlan(discovery, { conversationId: sessionId });
+      const planningMs = Date.now() - tPlanStart;
       if (!plan.valid) {
         const errMsg = plan.clarificationNeeded || plan.validationErrors.join(' ');
         const res = await this.finish(
           intentId,
-          trimmed,
+          effectiveText,
           personality.formatFailure(errMsg),
           false,
           'internal',
@@ -133,18 +356,26 @@ export class AssistantBrain {
           startTime,
           sessionId
         );
-        return { ...res, plan };
+        return {
+          ...res,
+          plan,
+          executiveDecision: 'HANDLE_FAILURE',
+          assistantRequest: understood,
+          timingsMs: { understanding: understandingMs, context: contextMs, planning: planningMs, total: Date.now() - startTime },
+        };
       }
 
       const submitted = await getBackgroundOrchestrator().submitPlan(plan, {
-        ownerId: 'local',
+        ownerId: actorId,
+        conversationId: sessionId,
         approvedHighRisk,
+        grantedPermissions: options?.grantedPermissions,
       });
 
       const acceptedMsg = `I've started that in the background, ${profile.userName} (Task ${submitted.taskId}, ${plan.steps.length} steps). I'll notify you as each step completes.`;
       const res = await this.finish(
         intentId,
-        trimmed,
+        effectiveText,
         acceptedMsg,
         true,
         'internal',
@@ -152,15 +383,23 @@ export class AssistantBrain {
         startTime,
         sessionId
       );
-      return { ...res, plan, backgroundTaskId: submitted.taskId };
+      return {
+        ...res,
+        plan,
+        backgroundTaskId: submitted.taskId,
+        executiveDecision: 'EXECUTE_PLAN',
+        assistantRequest: understood,
+        timingsMs: { understanding: understandingMs, context: contextMs, planning: planningMs, total: Date.now() - startTime },
+      };
     }
 
-    // 2. Deterministic Natural-Language Tool Matching (reliable even offline)
-    const directTool = this.matchDirectTool(trimmed, profile.timezone);
+    // 7. Deterministic Natural-Language Tool Matching (single tool, reliable offline)
+    const directTool = this.matchDirectTool(effectiveText, profile.timezone);
     if (directTool) {
       const toolRes = await registry.execute(directTool.tool, directTool.args, {
-        actor: 'user',
+        actor: actorId,
         approvedHighRisk,
+        grantedPermissions: options?.grantedPermissions,
         timezone: profile.timezone,
       });
       const output = toolRes.success
@@ -169,7 +408,7 @@ export class AssistantBrain {
 
       const res = await this.finish(
         intentId,
-        trimmed,
+        effectiveText,
         output,
         toolRes.success,
         'internal',
@@ -177,12 +416,60 @@ export class AssistantBrain {
         startTime,
         sessionId
       );
-      return { ...res, toolResult: toolRes };
+      return {
+        ...res,
+        toolResult: toolRes,
+        executiveDecision: toolRes.success ? 'SYNTHESIZE_RESULTS' : 'HANDLE_FAILURE',
+        assistantRequest: understood,
+        timingsMs: {
+          understanding: understandingMs,
+          context: contextMs,
+          planning: Date.now() - tPlanStart,
+          total: Date.now() - startTime,
+        },
+      };
     }
 
-    // 3. Explicit legacy intents (WhatsApp, Email, Browser/App control, Memory store/recall)
+    // 7b. Single discovered capability from Phase 2/6/7 registry
+    if (discovery.matched.length === 1) {
+      const cap = discovery.matched[0].capability;
+      const args = discovery.matched[0].suggestedArguments || {};
+      const toolRes = await registry.execute(cap.id, args, {
+        actor: actorId,
+        approvedHighRisk,
+        grantedPermissions: options?.grantedPermissions,
+        timezone: profile.timezone,
+      });
+      const output = toolRes.success
+        ? personality.formatVerifiedSuccess(toolRes.message, toolRes.verified)
+        : personality.formatFailure(toolRes.error || toolRes.message);
+      const res = await this.finish(
+        intentId,
+        effectiveText,
+        output,
+        toolRes.success,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return {
+        ...res,
+        toolResult: toolRes,
+        executiveDecision: toolRes.success ? 'SYNTHESIZE_RESULTS' : 'HANDLE_FAILURE',
+        assistantRequest: understood,
+        timingsMs: {
+          understanding: understandingMs,
+          context: contextMs,
+          planning: Date.now() - tPlanStart,
+          total: Date.now() - startTime,
+        },
+      };
+    }
+
+    // 8. Explicit legacy intents (WhatsApp, Email, Browser/App control, Memory store/recall)
     const parser = getIntentParser();
-    const parsedIntent = await parser.parse(trimmed);
+    const parsedIntent = await parser.parse(effectiveText);
     const legacyHandled = new Set<ActionType>([
       ActionType.SEND_WHATSAPP,
       ActionType.OPEN_BROWSER,
@@ -203,17 +490,29 @@ export class AssistantBrain {
 
     if (legacyHandled.has(parsedIntent.action) && parsedIntent.confidence >= 0.75) {
       const routed = await getTaskRouter().route(parsedIntent);
-      store.logConversation('assistant', routed.output || routed.error || '', parsedIntent.action, sessionId);
-      return routed;
+      if (memoryPolicy.allow) {
+        store.logConversation('assistant', routed.output || routed.error || '', parsedIntent.action, sessionId);
+      }
+      return {
+        ...routed,
+        executiveDecision: routed.success ? 'EXECUTE_PLAN' : 'HANDLE_FAILURE',
+        assistantRequest: understood,
+        timingsMs: {
+          understanding: understandingMs,
+          context: contextMs,
+          planning: Date.now() - tPlanStart,
+          total: Date.now() - startTime,
+        },
+      };
     }
 
-    // 4. Local Ollama Structured Tool Calling & Reasoning
+    // 9. Local Ollama Structured Tool Calling & Reasoning (bounded & injection-sanitized context)
     const ollama = getOllamaClient();
     const ollamaStatus = await ollama.checkStatus(1_200);
     if (ollamaStatus.reachable && ollamaStatus.modelAvailable) {
-      const memContext = store.getRelevantContext(trimmed, 6);
+      const memContext = boundedCtx.relevantMemories.map((m) => m.value).join('\n');
       const systemPrompt = personality.buildSystemPrompt(profile, memContext);
-      const history = store.getRecentConversations(6, sessionId);
+      const history = boundedCtx.recentMessages;
 
       const messages: OllamaChatMessage[] = [
         { role: 'system', content: systemPrompt },
@@ -221,7 +520,7 @@ export class AssistantBrain {
           role: (h.role === 'assistant' ? 'assistant' : 'user') as 'user' | 'assistant',
           content: h.content,
         })),
-        { role: 'user', content: trimmed },
+        { role: 'user', content: effectiveText },
       ];
 
       const chatRes = await ollama.chat({
@@ -236,8 +535,9 @@ export class AssistantBrain {
 
           for (const call of chatRes.toolCalls) {
             const execRes = await registry.execute(call.name, call.arguments, {
-              actor: 'ollama-agent',
-              approvedHighRisk,
+              actor: actorId,
+              approvedHighRisk: false, // Never allow LLM tool proposal to auto-approve high risk
+              grantedPermissions: options?.grantedPermissions,
               timezone: profile.timezone,
             });
             lastToolResult = execRes;
@@ -260,7 +560,7 @@ export class AssistantBrain {
 
           const result = await this.finish(
             intentId,
-            trimmed,
+            effectiveText,
             finalText,
             lastToolResult ? lastToolResult.success : true,
             'claw',
@@ -268,13 +568,24 @@ export class AssistantBrain {
             startTime,
             sessionId
           );
-          return { ...result, toolResult: lastToolResult };
+          return {
+            ...result,
+            toolResult: lastToolResult,
+            executiveDecision: 'SYNTHESIZE_RESULTS',
+            assistantRequest: understood,
+            timingsMs: {
+              understanding: understandingMs,
+              context: contextMs,
+              planning: Date.now() - tPlanStart,
+              total: Date.now() - startTime,
+            },
+          };
         }
 
         if (chatRes.content) {
-          return this.finish(
+          const res = await this.finish(
             intentId,
-            trimmed,
+            effectiveText,
             chatRes.content,
             true,
             'claw',
@@ -282,19 +593,50 @@ export class AssistantBrain {
             startTime,
             sessionId
           );
+          return {
+            ...res,
+            executiveDecision: 'ANSWER_DIRECTLY',
+            assistantRequest: understood,
+            timingsMs: {
+              understanding: understandingMs,
+              context: contextMs,
+              planning: Date.now() - tPlanStart,
+              total: Date.now() - startTime,
+            },
+          };
         }
       } else {
         log.warn('Ollama chat call failed', { error: chatRes.error });
       }
     }
 
-    // 5. Fallback to TaskRouter (ClawBridge) or honest offline guidance
+    // 10. Fallback to TaskRouter (ClawBridge) or honest offline guidance
     if (!ollamaStatus.reachable) {
       const honestMsg = personality.formatFailure(
         `Local Ollama server is not reachable at ${ollamaStatus.baseUrl}.`,
         `Start Ollama with "ollama serve" and ensure model "${ollamaStatus.configuredModel}" is pulled ("ollama pull ${ollamaStatus.configuredModel}").`
       );
-      return this.finish(intentId, trimmed, honestMsg, false, 'internal', RiskLevel.LOW, startTime, sessionId);
+      const res = await this.finish(
+        intentId,
+        effectiveText,
+        honestMsg,
+        false,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return {
+        ...res,
+        executiveDecision: 'HANDLE_FAILURE',
+        assistantRequest: understood,
+        timingsMs: {
+          understanding: understandingMs,
+          context: contextMs,
+          planning: Date.now() - tPlanStart,
+          total: Date.now() - startTime,
+        },
+      };
     }
 
     const routed = await getTaskRouter().route(parsedIntent);

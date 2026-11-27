@@ -14,6 +14,7 @@ import { getTts } from '../../voice/tts';
 import { TaskResult } from '../../shared/types';
 import { toStructuredIntent } from '../../intelligence/systemPrompt';
 import { getAssistantBrain } from '../../orchestration/assistantBrain';
+import { resolveCallerIdentity } from '../authContext';
 
 const log = createLayerLogger('Routes');
 
@@ -40,7 +41,12 @@ fridayRoutes.post('/run', async (req: Request, res: Response) => {
   }
 
   try {
-    const result = await processTextInput(text, sessionId, Boolean(approved));
+    const identity = await resolveCallerIdentity(req);
+    if (!identity) {
+      res.status(401).json({ error: 'Unauthorized: valid bearer token required' });
+      return;
+    }
+    const result = await processTextInput(text, sessionId, Boolean(approved), identity.actorId);
     res.json(result);
   } catch (error) {
     log.error('Error processing request', { error: (error as Error).message });
@@ -163,7 +169,8 @@ fridayRoutes.get('/history', async (req: Request, res: Response) => {
 export async function processTextInput(
   text: string,
   sessionId?: string,
-  approvedHighRisk = false
+  approvedHighRisk = false,
+  actorId = 'local'
 ): Promise<TaskResult & { intent?: unknown; toolResult?: unknown }> {
-  return getAssistantBrain().process(text, sessionId, approvedHighRisk);
+  return getAssistantBrain().process(text, sessionId, approvedHighRisk, { actorId });
 }
