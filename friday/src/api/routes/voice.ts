@@ -9,6 +9,9 @@ import { getVoiceService } from '../../voice/voiceService';
 import { getWindowsLifecycleManager } from '../../voice/windowsLifecycle';
 import { getSpeechRecognitionEngine } from '../../voice/speechRecognition';
 import { getSpeechSynthesisEngine } from '../../voice/speechSynthesis';
+import { getGreetingService } from '../../voice/greetingService';
+import { getVoiceSessionManager } from '../../voice/voiceSessionManager';
+import { getVoiceStateManager } from '../../voice/voiceStateManager';
 import { requireCallerIdentity } from '../authContext';
 
 const log = createLayerLogger('VoiceRoutes');
@@ -16,7 +19,7 @@ const log = createLayerLogger('VoiceRoutes');
 export const voiceRoutes = Router();
 
 voiceRoutes.use(async (req, res, next) => {
-  if (req.method === 'GET' && (req.path === '/status' || req.path === '/health')) {
+  if (req.method === 'GET' && (req.path === '/status' || req.path === '/health' || req.path === '/greeting')) {
     next();
     return;
   }
@@ -218,4 +221,101 @@ voiceRoutes.post('/', async (req: Request, res: Response) => {
     log.error('Error processing audio upload', { error: (err as Error).message });
     res.status(500).json({ error: 'Failed to process audio' });
   }
+});
+
+/**
+ * GET /friday/voice/greeting
+ * Returns a time-aware greeting for the requested or configured timezone.
+ */
+voiceRoutes.get('/greeting', (req: Request, res: Response) => {
+  const tz = typeof req.query.timezone === 'string' ? req.query.timezone : undefined;
+  const gs = getGreetingService();
+  const info = gs.getGreetingInfo(new Date(), tz);
+  const greeting = gs.generateWakeGreeting(new Date(), tz);
+  res.json({ greeting, ...info });
+});
+
+/**
+ * POST /friday/voice/farewell
+ * Returns a time-aware farewell (respecting explicit good-night requests).
+ */
+voiceRoutes.post('/farewell', (req: Request, res: Response) => {
+  const { explicitGoodNight, timezone } = (req.body || {}) as {
+    explicitGoodNight?: boolean;
+    timezone?: string;
+  };
+  const gs = getGreetingService();
+  const info = gs.getGreetingInfo(new Date(), timezone);
+  const farewell = gs.generateFarewell(new Date(), { explicitGoodNight, timezone });
+  res.json({ farewell, period: info.period, timezone: info.timezone });
+});
+
+/**
+ * POST /friday/voice/session/start
+ * Starts a voice conversation session and returns the time-aware wake greeting.
+ */
+voiceRoutes.post('/session/start', async (req: Request, res: Response) => {
+  const { timezone, speakOnDesktop } = (req.body || {}) as {
+    timezone?: string;
+    speakOnDesktop?: boolean;
+  };
+  const voice = getVoiceService();
+  const state = voice.getState();
+  if (state === 'MUTED' || state === 'SLEEPING' || state === 'DISABLED') {
+    res.status(400).json({ error: `Cannot start voice session while in state ${state}` });
+    return;
+  }
+
+  const gs = getGreetingService();
+  const info = gs.getGreetingInfo(new Date(), timezone);
+  const greeting = gs.generateWakeGreeting(new Date(), timezone);
+
+  if (speakOnDesktop) {
+    const sessionId = await getVoiceSessionManager().startSession();
+    res.json({ sessionId, greeting, state: voice.getState(), ...info });
+    return;
+  }
+
+  const sessionId = `voice-${Date.now().toString(36)}`;
+  res.json({ sessionId, greeting, state: 'GREETING', ...info });
+});
+
+/**
+ * POST /friday/voice/session/turn
+ * Evaluates a spoken voice turn via centralized intent detection and Assistant Brain
+ * without populating text chat history.
+ */
+voiceRoutes.post('/session/turn', async (req: Request, res: Response) => {
+  const { text, sessionId, timezone } = (req.body || {}) as {
+    text?: string;
+    sessionId?: string;
+    timezone?: string;
+  };
+  if (!text || typeof text !== 'string') {
+    res.status(400).json({ error: 'Missing "text" field' });
+    return;
+  }
+
+  try {
+    const sid = sessionId || `voice-${Date.now().toString(36)}`;
+    const result = await getVoiceSessionManager().evaluateVoiceTurn(text, sid, timezone);
+    res.json(result);
+  } catch (err) {
+    log.error('Error evaluating voice turn', { error: (err as Error).message });
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /friday/voice/session/end
+ * Ends an active voice session cleanly (returns to STANDBY).
+ */
+voiceRoutes.post('/session/end', (_req: Request, res: Response) => {
+  const sessionManager = getVoiceSessionManager();
+  sessionManager.abortSession();
+  const stateManager = getVoiceStateManager();
+  if (stateManager.canTransitionTo('STANDBY')) {
+    stateManager.transitionTo('STANDBY', 'Voice session ended');
+  }
+  res.json({ ended: true, state: stateManager.getState() });
 });

@@ -5,6 +5,8 @@ import '../core/networking/friday_dio_client.dart';
 import '../core/networking/friday_ws_client.dart';
 import '../core/security/secure_storage_service.dart';
 import '../core/storage/local_database.dart';
+import '../core/voice/friday_personality_engine.dart';
+import '../core/voice/voice_session_controller.dart';
 import '../features/device_monitoring/device_control_service.dart';
 import '../features/device_monitoring/phone_telemetry_service.dart';
 import '../services/companion_api_service.dart';
@@ -72,6 +74,45 @@ final onboardingCompleteProvider = StateProvider<bool>((ref) => false);
 
 final companionControllerProvider = Provider<CompanionController>((ref) {
   return CompanionController(ref);
+});
+
+final personalityEngineProvider = Provider<FridayPersonalityEngine>((ref) {
+  return FridayPersonalityEngine();
+});
+
+final voiceSessionProvider =
+    StateNotifierProvider<VoiceSessionController, VoiceSessionSnapshot>((ref) {
+  final personality = ref.watch(personalityEngineProvider);
+  return VoiceSessionController(
+    personality: personality,
+    stt: DeviceSpeechRecognizerAdapter(),
+    tts: DeviceTtsAdapter(),
+    executeCommand: (text, sessionId) async {
+      final conn = ref.read(connectionStateProvider);
+      if (!conn.isConnected) {
+        const offlineReply =
+            "FRIDAY's local brain is currently offline, Boss. Reconnect to your laptop to process AI requests.";
+        return const VoiceBackendTurnResponse(
+          reply: offlineReply,
+          voiceSummary: offlineReply,
+          isFarewell: false,
+          shouldListen: false,
+        );
+      }
+      final dio = ref.read(dioClientProvider);
+      final res = await dio.post('/friday/voice/session/turn', data: {
+        'text': text,
+        'sessionId': sessionId,
+      });
+      return VoiceBackendTurnResponse(
+        reply: res['reply']?.toString() ?? 'Done, Boss.',
+        voiceSummary:
+            res['voiceSummary']?.toString() ?? res['reply']?.toString() ?? 'Done, Boss.',
+        isFarewell: res['isFarewell'] == true,
+        shouldListen: res['shouldListen'] != false,
+      );
+    },
+  );
 });
 
 class CompanionController {

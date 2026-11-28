@@ -3,6 +3,8 @@
 // Consistent, configurable JARVIS-inspired assistant persona
 // ============================================================
 
+import { getGreetingService } from '../voice/greetingService';
+
 export type FormalityLevel = 'formal' | 'balanced' | 'casual';
 export type HumorLevel = 'none' | 'subtle' | 'playful';
 export type VerbosityLevel = 'concise' | 'balanced' | 'detailed';
@@ -81,24 +83,23 @@ export class PersonalityEngine {
 
     const candidatesByPeriod: Record<TimePeriodGreeting, string[]> = {
       'Good morning': [
-        `Good morning, ${name}! Hope you slept well.`,
-        `Good morning, ${name}. Ready to get started today?`,
-        `Morning, ${name}. Systems are online and standing by.`,
+        `Good morning, ${name}. FRIDAY is online. I'm ready for your instructions.`,
+        `Good morning, ${name} — all systems are operational. How may I assist you?`,
+        `Good morning, ${name}, I'm ready when you are.`,
       ],
       'Good afternoon': [
-        `Good afternoon, ${name}. What are we working on today?`,
-        `Good afternoon, ${name}. Ready whenever you are.`,
-        `Afternoon, ${name}. How can I assist?`,
+        `Good afternoon, ${name}. FRIDAY is online and ready to assist.`,
+        `Good afternoon, ${name}. What would you like me to take care of?`,
+        `Good afternoon, ${name}. I'm listening.`,
       ],
       'Good evening': [
-        `Good evening, ${name}. I'm ready.`,
-        `Good evening, ${name}. Welcome back.`,
-        `Evening, ${name}. What's on the agenda?`,
+        `Good evening, ${name}. Welcome back. How may I assist you?`,
+        `Good evening, ${name}. I'm online and ready for your instructions.`,
+        `Good evening, ${name}. What can I take care of for you?`,
       ],
       'Good night': [
-        `Good night, ${name}. Have a peaceful rest.`,
-        `Good night, ${name}. I'll keep watch on any active systems.`,
-        `Working late, ${name}? Good night — let me know if you need anything before you rest.`,
+        `Good evening, ${name}. I'm online. What do you need?`,
+        `Welcome back, ${name}. FRIDAY is ready to assist.`,
       ],
     };
 
@@ -130,18 +131,18 @@ export class PersonalityEngine {
   }
 
   /**
-   * Build a farewell / good night message.
+   * Build a time-aware farewell / good night message using the centralized GreetingService.
    */
-  buildFarewell(profile: PersonalityProfile, rawInput = ''): string {
-    const isNight = /\b(good\s*night|sleep|bed)\b/i.test(rawInput);
-    const namePart = profile.userName && profile.userName !== 'User' ? `, ${profile.userName}` : '';
-
-    if (isNight) {
-      return `Good night${namePart}. Rest well — I'll keep an eye on any active watchers and reminders.`;
+  buildFarewell(profile: PersonalityProfile, rawInput = '', now: Date = new Date()): string {
+    const isNight = /\b(good\s*night|goodnight)\b/i.test(rawInput);
+    const greetingService = getGreetingService();
+    if (profile.userName && profile.userName.trim()) {
+      greetingService.setUserName(profile.userName.trim());
     }
-    return profile.formality === 'formal'
-      ? `Standing by${namePart}. Let me know whenever you need assistance.`
-      : `Standing by${namePart}. Just call when you need me.`;
+    return greetingService.generateFarewell(now, {
+      explicitGoodNight: isNight,
+      timezone: profile.timezone,
+    });
   }
 
   /**
@@ -185,7 +186,9 @@ export class PersonalityEngine {
 You are FRIDAY — a local-first, voice-capable personal AI assistant inspired by JARVIS.
 
 BEHAVIORAL RULES:
-- Communicate clearly, professionally, and naturally.
+- Address the user as "${profile.userName || 'Boss'}" naturally at greetings, acknowledgements, and farewells (without forcing it into every sentence).
+- Sound like a sophisticated personal executive assistant: confident, composed, respectful, concise, and natural.
+- Avoid excessive enthusiasm, emojis, slang, and repetitive robotic phrases like "Systems are standing by" or "How can I help you?" after every command.
 - Never claim an action succeeded unless a tool execution actually verified it.
 - Never claim to feel, see, hear, or experience human emotions literally.
 - If a tool or service is unavailable, state that honestly and explain what is needed.

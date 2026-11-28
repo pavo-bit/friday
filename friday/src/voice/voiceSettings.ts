@@ -41,8 +41,18 @@ export function getDefaultVoiceSettings(): VoiceSettings {
     ? process.env.FRIDAY_VOICE_WAKE_PHRASES.split(',').map((p) => p.trim().toLowerCase().replace(/_/g, ' ')).filter(Boolean)
     : ['hey friday', 'hello friday', 'wake up friday'];
 
-  const tz = process.env.FRIDAY_VOICE_TIMEZONE || 'Asia/Kolkata';
-  const validTz = isValidIanaTimezone(tz) ? tz : 'Asia/Kolkata';
+  let systemTz = 'Asia/Kolkata';
+  try {
+    const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (resolved && isValidIanaTimezone(resolved)) {
+      systemTz = resolved;
+    }
+  } catch {
+    // Fallback to Asia/Kolkata
+  }
+
+  const tz = process.env.FRIDAY_VOICE_TIMEZONE || systemTz;
+  const validTz = isValidIanaTimezone(tz) ? tz : systemTz;
 
   return {
     enabled: process.env.FRIDAY_VOICE_ENABLED !== 'false',

@@ -95,13 +95,16 @@
   let recognition = null;
   let voiceConversationActive = false;
   let voiceTurnProcessing = false;
+  let activeVoiceSessionId = null;
 
   function setVoiceUi(status, active = voiceConversationActive) {
     if (sttInfo) sttInfo.textContent = status;
-    micBtn.classList.toggle('listening', active);
-    micBtn.textContent = active ? '■' : '🎤';
-    micBtn.title = active ? 'Stop Voice Conversation' : 'Start Voice Conversation';
-    micBtn.setAttribute('aria-label', micBtn.title);
+    if (micBtn) {
+      micBtn.classList.toggle('listening', active);
+      micBtn.textContent = active ? '■' : '🎤';
+      micBtn.title = active ? 'Stop Voice Conversation' : 'Start Voice Conversation';
+      micBtn.setAttribute('aria-label', micBtn.title);
+    }
   }
 
   function startVoiceListening() {
@@ -118,16 +121,47 @@
     }
   }
 
-  function stopVoiceConversation() {
+  function stopVoiceConversation(keepSpeech = false) {
     voiceConversationActive = false;
     voiceTurnProcessing = false;
+    activeVoiceSessionId = null;
     try { recognition?.stop(); } catch {}
-    window.speechSynthesis?.cancel();
+    if (!keepSpeech) {
+      window.speechSynthesis?.cancel();
+      api('/friday/voice/session/end', { method: 'POST' }).catch(() => {});
+    }
     setVoiceUi('Voice conversation stopped. Tap the microphone to speak again.', false);
   }
 
+  async function startVoiceConversation() {
+    voiceConversationActive = true;
+    voiceTurnProcessing = true;
+    setVoiceUi('Starting voice session…', true);
+    try {
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const res = await api('/friday/voice/session/start', {
+        method: 'POST',
+        body: JSON.stringify({ timezone: tz, speakOnDesktop: false }),
+      });
+      activeVoiceSessionId = res.sessionId;
+      const greeting = res.greeting || 'Good evening, Boss. FRIDAY is ready to assist.';
+      setVoiceUi('FRIDAY is speaking…', true);
+      speak(greeting, {
+        onEnd: () => {
+          voiceTurnProcessing = false;
+          if (voiceConversationActive) {
+            setTimeout(startVoiceListening, 250);
+          }
+        },
+      });
+    } catch {
+      voiceTurnProcessing = false;
+      if (voiceConversationActive) startVoiceListening();
+    }
+  }
+
   if (SpeechRec) {
-    sttInfo.textContent = 'Tap the microphone to start a hands-free voice conversation with FRIDAY.';
+    if (sttInfo) sttInfo.textContent = 'Tap the microphone to start a hands-free voice conversation with FRIDAY.';
     recognition = new SpeechRec();
     recognition.lang = 'en-US';
     recognition.interimResults = false;
@@ -157,17 +191,16 @@
         setTimeout(startVoiceListening, 250);
       }
     };
-    micBtn.addEventListener('click', () => {
+    micBtn?.addEventListener('click', () => {
       if (voiceConversationActive) {
         stopVoiceConversation();
       } else {
-        voiceConversationActive = true;
-        startVoiceListening();
+        startVoiceConversation();
       }
     });
   } else {
-    sttInfo.textContent = 'Voice input is not supported in this browser. Use a Chromium-based browser with microphone access.';
-    micBtn.disabled = true;
+    if (sttInfo) sttInfo.textContent = 'Voice input is not supported in this browser. Use a Chromium-based browser with microphone access.';
+    if (micBtn) micBtn.disabled = true;
   }
 
   // Chat
@@ -190,29 +223,42 @@
     const isVoiceTurn = options.voice === true;
     if (!isVoiceTurn) appendMessage('user', text);
     try {
-      const res = await api('/friday/run', {
-        method: 'POST',
-        body: JSON.stringify({ text, channel: isVoiceTurn ? 'voice' : 'text' }),
-      });
-      const reply = isVoiceTurn
-        ? (res.personalityMeta?.voiceSummary || res.output || res.error || 'I am sorry, Boss. I could not complete that request.')
-        : (res.output || res.error || 'Done.');
       if (isVoiceTurn) {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const res = await api('/friday/voice/session/turn', {
+          method: 'POST',
+          body: JSON.stringify({
+            text,
+            sessionId: activeVoiceSessionId || undefined,
+            timezone: tz,
+          }),
+        });
+        if (res.sessionId) activeVoiceSessionId = res.sessionId;
+        const reply = res.voiceSummary || res.reply || 'Done, Boss.';
         setVoiceUi('FRIDAY is speaking…', true);
         speak(reply, {
           onEnd: () => {
             voiceTurnProcessing = false;
-            if (voiceConversationActive) {
+            if (res.isFarewell || !res.shouldListen) {
+              stopVoiceConversation(true);
+            } else if (voiceConversationActive) {
               setTimeout(startVoiceListening, 300);
               setVoiceUi('Your turn. I am listening.', true);
             }
           },
         });
-      } else {
-        const decisionTag = res.executiveDecision ? ` · ${res.executiveDecision}` : '';
-        const intentTag = res.assistantRequest?.intent ? ` · intent:${res.assistantRequest.intent}` : '';
-        appendMessage('assistant', reply, `${res.executor}${decisionTag}${intentTag} · ${res.durationMs}ms`);
+        refreshAll();
+        return;
       }
+
+      const res = await api('/friday/run', {
+        method: 'POST',
+        body: JSON.stringify({ text, channel: 'text' }),
+      });
+      const reply = res.output || res.error || 'Done.';
+      const decisionTag = res.executiveDecision ? ` · ${res.executiveDecision}` : '';
+      const intentTag = res.assistantRequest?.intent ? ` · intent:${res.assistantRequest.intent}` : '';
+      appendMessage('assistant', reply, `${res.executor}${decisionTag}${intentTag} · ${res.durationMs}ms`);
       refreshAll();
     } catch (err) {
       if (isVoiceTurn) {
@@ -492,8 +538,13 @@
     const { profile, digitalIdentity, conversationState } = persData;
 
     const hour = new Date().getHours();
-    const salutation = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-    const namePart = profile.userName && profile.userName !== 'User' ? `, ${profile.userName}` : '';
+    const salutation =
+      hour >= 5 && hour < 12
+        ? 'Good morning'
+        : hour >= 12 && hour < 17
+          ? 'Good afternoon'
+          : 'Good evening';
+    const namePart = profile.userName && profile.userName !== 'User' ? `, ${profile.userName}` : ', Boss';
     document.getElementById('greetingTitle').textContent = `${salutation}${namePart}.`;
 
     document.getElementById('profUserName').value = profile.userName;

@@ -1,6 +1,6 @@
 // ============================================================
-// FRIDAY — Greeting Service
-// Time-aware greeting classification and personality salutations
+// FRIDAY — Greeting & Farewell Service
+// Time-aware greeting/farewell classification and JARVIS-inspired salutations
 // ============================================================
 
 import { getMemoryStore } from '../memory/store';
@@ -21,19 +21,31 @@ export interface GreetingInfo {
   minute: number;
 }
 
+export interface FarewellOptions {
+  explicitGoodNight?: boolean;
+  timezone?: string;
+}
+
 export class GreetingService {
   private cachedUserName = 'Boss';
+  private lastWakeGreeting = '';
+  private lastFarewell = '';
 
   setUserName(name: string): void {
     if (name && name.trim()) {
       this.cachedUserName = name.trim();
     }
   }
+
   /**
    * Resolves the authoritative timezone.
-   * Prioritizes configured voice timezone -> system timezone -> 'Asia/Kolkata'.
+   * Prioritizes explicit override -> configured voice timezone -> system timezone -> 'Asia/Kolkata'.
    */
-  resolveTimezone(): string {
+  resolveTimezone(overrideTimezone?: string): string {
+    if (overrideTimezone && isValidIanaTimezone(overrideTimezone)) {
+      return overrideTimezone;
+    }
+
     const settings = getVoiceSettingsManager().getSettings();
     if (settings.timezone && isValidIanaTimezone(settings.timezone)) {
       return settings.timezone;
@@ -56,7 +68,7 @@ export class GreetingService {
    * 05:00 - 11:59 -> morning
    * 12:00 - 16:59 -> afternoon
    * 17:00 - 20:59 -> evening
-   * 21:00 - 04:59 -> night
+   * 21:00 - 04:59 -> night (Good evening when greeting; Good night when saying farewell)
    */
   classifyTimeOfDay(hour: number): TimeOfDayPeriod {
     if (hour >= 5 && hour < 12) return 'morning';
@@ -73,9 +85,10 @@ export class GreetingService {
     minute: number;
     formatted: string;
   } {
+    const safeTz = isValidIanaTimezone(timezone) ? timezone : 'Asia/Kolkata';
     try {
       const formatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
+        timeZone: safeTz,
         hour: 'numeric',
         minute: 'numeric',
         hour12: false,
@@ -89,7 +102,7 @@ export class GreetingService {
       const minute = minPart ? parseInt(minPart.value, 10) : now.getMinutes();
 
       const displayFormatter = new Intl.DateTimeFormat('en-US', {
-        timeZone: timezone,
+        timeZone: safeTz,
         hour: 'numeric',
         minute: '2-digit',
         hour12: true,
@@ -104,34 +117,37 @@ export class GreetingService {
       return {
         hour: now.getHours(),
         minute: now.getMinutes(),
-        formatted: `${now.getHours()}:${now.getMinutes()}`,
+        formatted: `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`,
       };
     }
   }
 
   /**
    * Generates a greeting info object based on local system clock.
+   * Never returns "Good night" as a wake/greeting salutation.
    */
-  getGreetingInfo(now: Date = new Date()): GreetingInfo {
-    const timezone = this.resolveTimezone();
+  getGreetingInfo(now: Date = new Date(), overrideTimezone?: string): GreetingInfo {
+    const timezone = this.resolveTimezone(overrideTimezone);
     const { hour, minute, formatted } = this.getLocalTimeParts(now, timezone);
     const period = this.classifyTimeOfDay(hour);
 
-    let salutation = 'Good day';
+    let salutation = 'Good evening';
     if (period === 'morning') salutation = 'Good morning';
     else if (period === 'afternoon') salutation = 'Good afternoon';
     else if (period === 'evening') salutation = 'Good evening';
-    else if (period === 'night') salutation = 'Good evening'; // Spoken natural fallback for night
+    else salutation = 'Good evening'; // 21:00-04:59: Good evening when greeting
 
-    let userName = this.cachedUserName;
-    getMemoryStore().then((store) => {
-      const profile = store.getPersonalityProfile();
-      if (profile && profile.userName) {
-        this.cachedUserName = profile.userName;
-      }
-    }).catch(() => {
-      // Fallback
-    });
+    const userName = this.cachedUserName || 'Boss';
+    getMemoryStore()
+      .then((store) => {
+        const profile = store.getPersonalityProfile();
+        if (profile && profile.userName) {
+          this.cachedUserName = profile.userName;
+        }
+      })
+      .catch(() => {
+        // Fallback
+      });
 
     return {
       salutation,
@@ -145,37 +161,88 @@ export class GreetingService {
   }
 
   /**
-   * Produce a natural, spoken wake-up greeting string.
+   * Produce a natural, professional spoken wake-up greeting string.
+   * Avoids repeating the same greeting on consecutive activations.
    */
-  generateWakeGreeting(now: Date = new Date()): string {
-    const info = this.getGreetingInfo(now);
+  generateWakeGreeting(now: Date = new Date(), overrideTimezone?: string): string {
+    const info = this.getGreetingInfo(now, overrideTimezone);
+    const name = info.userName || 'Boss';
+
     const variations: Record<TimeOfDayPeriod, string[]> = {
       morning: [
-        `${info.salutation}, ${info.userName}. I'm online and ready. What can I do for you?`,
-        `${info.salutation}, ${info.userName}. All systems are standing by.`,
-        `${info.salutation}, ${info.userName}. Ready when you are.`,
+        `Good morning, ${name}. FRIDAY is online. I'm ready for your instructions.`,
+        `Good morning, ${name}. All systems are operational. How may I assist you?`,
+        `Good morning, ${name}. I'm ready when you are.`,
       ],
       afternoon: [
-        `${info.salutation}, ${info.userName}. I'm here. What do you need?`,
-        `${info.salutation}, ${info.userName}. Systems standing by. How can I help?`,
-        `${info.salutation}, ${info.userName}. Ready for your command.`,
+        `Good afternoon, ${name}. FRIDAY is online and ready to assist.`,
+        `Good afternoon, ${name}. What would you like me to take care of?`,
+        `Good afternoon, ${name}. I'm listening.`,
       ],
       evening: [
-        `${info.salutation}, ${info.userName}. I'm listening. What can I do for you?`,
-        `${info.salutation}, ${info.userName}. Systems are online. How can I assist?`,
-        `${info.salutation}, ${info.userName}. Standing by for your instructions.`,
+        `Good evening, ${name}. Welcome back. How may I assist you?`,
+        `Good evening, ${name}. I'm online and ready for your instructions.`,
+        `Good evening, ${name}. What can I take care of for you?`,
       ],
       night: [
-        `Welcome back, ${info.userName}. Systems are quiet and standing by.`,
-        `Good evening, ${info.userName}. I'm here if you need anything.`,
-        `Online and listening, ${info.userName}. What can I do for you?`,
+        `Good evening, ${name}. I'm online. What do you need?`,
+        `Welcome back, ${name}. FRIDAY is ready to assist.`,
       ],
     };
 
-    const options = variations[info.period];
-    // Deterministic selection based on day of month + hour to vary naturally across the day
-    const index = (now.getDate() + info.hour) % options.length;
-    return options[index];
+    const candidates = variations[info.period];
+    const nonRepeating = candidates.filter((c) => c !== this.lastWakeGreeting);
+    const pool = nonRepeating.length > 0 ? nonRepeating : candidates;
+    const index = (now.getDate() + info.hour + info.minute) % pool.length;
+    const chosen = pool[index];
+    this.lastWakeGreeting = chosen;
+    log.debug('Generated wake greeting', { period: info.period, timezone: info.timezone });
+    return chosen;
+  }
+
+  /**
+   * Produce a professional, time-aware farewell string based on the current local time
+   * (or explicit "good night" request regardless of hour).
+   */
+  generateFarewell(now: Date = new Date(), options: FarewellOptions = {}): string {
+    const info = this.getGreetingInfo(now, options.timezone);
+    const name = info.userName || 'Boss';
+
+    const isNightFarewell = Boolean(options.explicitGoodNight) || info.period === 'night';
+
+    const daytimeFarewells = [
+      `Certainly, ${name}. That will be all for now. Have a productive day.`,
+      `Understood, ${name}. I'll be standing by. Have a pleasant day.`,
+      `Very well, ${name}. Have a good day. I'll be here when you need me.`,
+    ];
+
+    const eveningFarewells = [
+      `Of course, ${name}. Have a pleasant evening. I'll be standing by.`,
+      `Understood, ${name}. Enjoy your evening. I'll be ready whenever you need me.`,
+    ];
+
+    const nightFarewells = [
+      `Good night, ${name}. Have a restful night. I'll be standing by.`,
+      `Good night, ${name}. Rest well. FRIDAY will be ready when you return.`,
+    ];
+
+    const candidates = isNightFarewell
+      ? nightFarewells
+      : info.period === 'evening'
+        ? eveningFarewells
+        : daytimeFarewells;
+
+    const nonRepeating = candidates.filter((c) => c !== this.lastFarewell);
+    const pool = nonRepeating.length > 0 ? nonRepeating : candidates;
+    const index = (now.getDate() + info.hour + info.minute) % pool.length;
+    const chosen = pool[index];
+    this.lastFarewell = chosen;
+    log.debug('Generated farewell', {
+      period: info.period,
+      explicitGoodNight: Boolean(options.explicitGoodNight),
+      timezone: info.timezone,
+    });
+    return chosen;
   }
 }
 

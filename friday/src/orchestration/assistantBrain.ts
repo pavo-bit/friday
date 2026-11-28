@@ -7,6 +7,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getMemoryStore } from '../memory/store';
 import { getPersonalityEngine } from '../intelligence/personality';
+import { classifyConversationIntent } from '../voice/conversationIntent';
 import { getAdaptivePersonalityEngine } from '../personality/personalityEngine';
 import { selectResponseDepth } from '../personality/responseDepth';
 import { InteractionChannel, PersonalityMetadata } from '../personality/personalityTypes';
@@ -203,9 +204,31 @@ export class AssistantBrain {
       };
     }
 
-    // 3. Greetings, Compound Greeting+Command requests & Farewells
+    // 3. Centralized conversation intent check (Farewells vs Greetings vs Commands)
+    const convIntent = classifyConversationIntent(effectiveText, false);
+    if (convIntent.shouldEndConversation || understood.intent === 'farewell') {
+      const output = personality.buildFarewell(profile, effectiveText);
+      const res = await this.finish(
+        intentId,
+        effectiveText,
+        output,
+        true,
+        'internal',
+        RiskLevel.LOW,
+        startTime,
+        sessionId
+      );
+      return {
+        ...res,
+        executiveDecision: 'ANSWER_DIRECTLY',
+        assistantRequest: understood,
+        timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
+      };
+    }
+
+    // Greetings & Compound Greeting+Command requests
     const greetingPrefixMatch = effectiveText.match(
-      /^(?:(?:hi|hello|hey|good\s*(?:morning|afternoon|evening|night)|yo|greetings)(?:\s*,?\s*friday)?[!.,\s]*)(.*)$/i
+      /^(?:(?:hi|hello|hey|good\s*(?:morning|afternoon|evening)|yo|greetings)(?:\s*,?\s*friday)?[!.,\s]*)(.*)$/i
     );
     if (greetingPrefixMatch) {
       const remainder = (greetingPrefixMatch[1] || '').trim();
@@ -270,26 +293,6 @@ export class AssistantBrain {
           timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
         };
       }
-    }
-
-    if (understood.intent === 'farewell') {
-      const output = personality.buildFarewell(profile, effectiveText);
-      const res = await this.finish(
-        intentId,
-        effectiveText,
-        output,
-        true,
-        'internal',
-        RiskLevel.LOW,
-        startTime,
-        sessionId
-      );
-      return {
-        ...res,
-        executiveDecision: 'ANSWER_DIRECTLY',
-        assistantRequest: understood,
-        timingsMs: { understanding: understandingMs, context: 0, planning: 0, total: Date.now() - startTime },
-      };
     }
 
     // 4. Bounded Context Resolution

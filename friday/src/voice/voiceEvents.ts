@@ -12,6 +12,7 @@ export type VoiceState =
   | 'STARTING'
   | 'STANDBY'
   | 'WAKE_DETECTED'
+  | 'GREETING'
   | 'LISTENING'
   | 'PROCESSING'
   | 'SPEAKING'

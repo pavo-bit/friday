@@ -127,6 +127,7 @@ export class VoiceService {
 
     log.info('Stopping FRIDAY Voice Service...');
     try {
+      this.sessionManager.abortSession();
       if (this.stateManager.canTransitionTo('STOPPING')) {
         this.stateManager.transitionTo('STOPPING', 'User requested shutdown');
       }
@@ -145,6 +146,7 @@ export class VoiceService {
    * Mute microphone capture physically.
    */
   mute(): boolean {
+    this.sessionManager.abortSession();
     this.micManager.mute();
     this.ttsEngine.interrupt();
     if (this.stateManager.canTransitionTo('MUTED')) {
@@ -168,6 +170,7 @@ export class VoiceService {
    * Put voice service into sleeping state (wake listening paused).
    */
   sleep(): boolean {
+    this.sessionManager.abortSession();
     this.ttsEngine.interrupt();
     this.micManager.stopCapture();
     if (this.stateManager.canTransitionTo('SLEEPING')) {

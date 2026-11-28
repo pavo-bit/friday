@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../app/app_theme.dart';
 import '../../app/providers.dart';
+import '../../core/voice/voice_session_controller.dart';
 
 class AssistantPage extends ConsumerStatefulWidget {
   const AssistantPage({super.key});
@@ -36,11 +37,55 @@ class _AssistantPageState extends ConsumerState<AssistantPage> {
   Widget build(BuildContext context) {
     final conn = ref.watch(connectionStateProvider);
     final messages = ref.watch(cachedMessagesProvider);
+    final voice = ref.watch(voiceSessionProvider);
+    final voiceCtrl = ref.read(voiceSessionProvider.notifier);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('FRIDAY Assistant')),
+      appBar: AppBar(
+        title: const Text('FRIDAY Assistant'),
+        actions: [
+          IconButton(
+            tooltip: voice.isSessionActive
+                ? 'Stop Voice Session'
+                : 'Start Voice Session',
+            icon: Icon(
+              voice.isSessionActive ? Icons.mic_off : Icons.mic,
+              color: voice.state == VoiceLifecycleState.listening
+                  ? FridayTheme.danger
+                  : FridayTheme.cyanAccent,
+            ),
+            onPressed: () {
+              if (voice.isSessionActive) {
+                voiceCtrl.stopSession();
+              } else {
+                voiceCtrl.startSession();
+              }
+            },
+          ),
+        ],
+      ),
       body: Column(
         children: [
+          if (voice.state != VoiceLifecycleState.standby)
+            Container(
+              width: double.infinity,
+              color: FridayTheme.primary.withValues(alpha: 0.16),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              child: Row(
+                children: [
+                  const Icon(Icons.graphic_eq,
+                      size: 18, color: FridayTheme.cyanAccent),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '${voice.state.name.toUpperCase()}: ${voice.statusText}',
+                      style: const TextStyle(
+                          color: FridayTheme.cyanAccent, fontSize: 12.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (!conn.isConnected)
             Container(
               width: double.infinity,

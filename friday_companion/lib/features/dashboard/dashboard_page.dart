@@ -14,15 +14,8 @@ class DashboardPage extends ConsumerWidget {
     final telemetryAsync = ref.watch(phoneTelemetryProvider);
     final messages = ref.watch(cachedMessagesProvider);
     final activities = ref.watch(activityHistoryProvider);
-
-    final hour = DateTime.now().hour;
-    final greeting = hour >= 5 && hour < 12
-        ? 'Good morning, Boss.'
-        : hour >= 12 && hour < 17
-            ? 'Good afternoon, Boss.'
-            : hour >= 17 && hour < 21
-                ? 'Good evening, Boss.'
-                : 'Good night, Boss.';
+    final personality = ref.watch(personalityEngineProvider);
+    final greeting = personality.generateDashboardGreeting();
 
     final statusColor = switch (conn.status) {
       ConnectionStatus.connected => FridayTheme.success,
