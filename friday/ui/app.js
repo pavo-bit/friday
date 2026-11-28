@@ -56,28 +56,34 @@
     }
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
-    const chosen = voices[parseInt(voiceSelect.value, 10)];
+    const chosen = voiceSelect ? voices[parseInt(voiceSelect.value, 10)] : null;
     if (chosen) u.voice = chosen;
-    u.rate = parseFloat(rateInput.value || '1');
-    u.pitch = parseFloat(pitchInput.value || '1');
+    u.rate = parseFloat(rateInput?.value || '1');
+    u.pitch = parseFloat(pitchInput?.value || '1');
     u.onend = () => options.onEnd?.();
     u.onerror = () => options.onEnd?.();
     window.speechSynthesis.speak(u);
   }
 
-  rateInput.addEventListener('input', () => {
-    document.getElementById('rateVal').textContent = rateInput.value;
-  });
-  pitchInput.addEventListener('input', () => {
-    document.getElementById('pitchVal').textContent = pitchInput.value;
-  });
-  document.getElementById('previewVoiceBtn').addEventListener('click', () => {
+  if (rateInput) {
+    rateInput.addEventListener('input', () => {
+      const rateVal = document.getElementById('rateVal');
+      if (rateVal) rateVal.textContent = rateInput.value;
+    });
+  }
+  if (pitchInput) {
+    pitchInput.addEventListener('input', () => {
+      const pitchVal = document.getElementById('pitchVal');
+      if (pitchVal) pitchVal.textContent = pitchInput.value;
+    });
+  }
+  document.getElementById('previewVoiceBtn')?.addEventListener('click', () => {
     speak('Systems online. FRIDAY voice output is active and ready.');
   });
-  document.getElementById('stopVoiceBtn').addEventListener('click', () => {
+  document.getElementById('stopVoiceBtn')?.addEventListener('click', () => {
     window.speechSynthesis?.cancel();
   });
-  document.getElementById('stopSpeakBtn').addEventListener('click', () => {
+  document.getElementById('stopSpeakBtn')?.addEventListener('click', () => {
     window.speechSynthesis?.cancel();
   });
 
@@ -1157,7 +1163,7 @@
         const msg = JSON.parse(evt.data);
         if (msg.type === 'notification:new') {
           loadNotifications();
-          if (document.getElementById('autoSpeakAlerts').checked && msg.payload?.severity === 'critical') {
+          if (document.getElementById('autoSpeakAlerts')?.checked && msg.payload?.severity === 'critical') {
             speak(`Alert: ${msg.payload.title}. ${msg.payload.message}`);
           }
         } else if (msg.type === 'watcher:updated') {
