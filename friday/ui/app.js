@@ -49,14 +49,19 @@
     window.speechSynthesis.onvoiceschanged = loadVoices;
   }
 
-  function speak(text) {
-    if (!('speechSynthesis' in window) || !text) return;
+  function speak(text, options = {}) {
+    if (!('speechSynthesis' in window) || !text) {
+      options.onEnd?.();
+      return;
+    }
     window.speechSynthesis.cancel();
     const u = new SpeechSynthesisUtterance(text);
     const chosen = voices[parseInt(voiceSelect.value, 10)];
     if (chosen) u.voice = chosen;
     u.rate = parseFloat(rateInput.value || '1');
     u.pitch = parseFloat(pitchInput.value || '1');
+    u.onend = () => options.onEnd?.();
+    u.onerror = () => options.onEnd?.();
     window.speechSynthesis.speak(u);
   }
 
@@ -76,29 +81,86 @@
     window.speechSynthesis?.cancel();
   });
 
-  // Voice Input (Web Speech API)
+  // Voice Input: voice turns are sent directly to FRIDAY and answered aloud.
+  // They deliberately do not populate the text-chat composer or message list.
   const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   const sttInfo = document.getElementById('sttSupportInfo');
   const micBtn = document.getElementById('micBtn');
   let recognition = null;
+  let voiceConversationActive = false;
+  let voiceTurnProcessing = false;
+
+  function setVoiceUi(status, active = voiceConversationActive) {
+    if (sttInfo) sttInfo.textContent = status;
+    micBtn.classList.toggle('listening', active);
+    micBtn.textContent = active ? '■' : '🎤';
+    micBtn.title = active ? 'Stop Voice Conversation' : 'Start Voice Conversation';
+    micBtn.setAttribute('aria-label', micBtn.title);
+  }
+
+  function startVoiceListening() {
+    if (!recognition || !voiceConversationActive || voiceTurnProcessing) return;
+    try {
+      recognition.start();
+      setVoiceUi('Listening… speak naturally. FRIDAY will answer aloud.', true);
+    } catch (err) {
+      // The browser can briefly report that recognition is already starting.
+      if (err.name !== 'InvalidStateError') {
+        setVoiceUi('Microphone could not start. Check browser microphone permission.', false);
+        voiceConversationActive = false;
+      }
+    }
+  }
+
+  function stopVoiceConversation() {
+    voiceConversationActive = false;
+    voiceTurnProcessing = false;
+    try { recognition?.stop(); } catch {}
+    window.speechSynthesis?.cancel();
+    setVoiceUi('Voice conversation stopped. Tap the microphone to speak again.', false);
+  }
+
   if (SpeechRec) {
-    sttInfo.textContent = 'Web Speech API available. Click the microphone in Conversation to speak.';
+    sttInfo.textContent = 'Tap the microphone to start a hands-free voice conversation with FRIDAY.';
     recognition = new SpeechRec();
     recognition.lang = 'en-US';
     recognition.interimResults = false;
-    recognition.onresult = (event) => {
-      const transcript = event.results[0][0].transcript;
-      document.getElementById('chatInput').value = transcript;
-      micBtn.classList.remove('listening');
+    recognition.continuous = false;
+    recognition.onresult = async (event) => {
+      const result = event.results[event.results.length - 1];
+      const transcript = result?.[0]?.transcript?.trim();
+      if (!transcript || !result.isFinal || !voiceConversationActive) return;
+      voiceTurnProcessing = true;
+      try { recognition.stop(); } catch {}
+      setVoiceUi('FRIDAY is thinking…', true);
+      await sendPrompt(transcript, { voice: true });
     };
-    recognition.onerror = () => micBtn.classList.remove('listening');
-    recognition.onend = () => micBtn.classList.remove('listening');
+    recognition.onerror = (event) => {
+      if (!voiceConversationActive) return;
+      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
+        stopVoiceConversation();
+        setVoiceUi('Microphone permission denied. Allow microphone access in your browser.', false);
+      } else if (event.error !== 'no-speech' && event.error !== 'aborted') {
+        setVoiceUi(`Voice input error: ${event.error}`, false);
+        voiceConversationActive = false;
+      }
+    };
+    recognition.onend = () => {
+      if (voiceConversationActive && !voiceTurnProcessing) {
+        // Recover from the browser ending an otherwise idle recognition session.
+        setTimeout(startVoiceListening, 250);
+      }
+    };
     micBtn.addEventListener('click', () => {
-      micBtn.classList.add('listening');
-      recognition.start();
+      if (voiceConversationActive) {
+        stopVoiceConversation();
+      } else {
+        voiceConversationActive = true;
+        startVoiceListening();
+      }
     });
   } else {
-    sttInfo.textContent = 'Web Speech API is not supported in this browser.';
+    sttInfo.textContent = 'Voice input is not supported in this browser. Use a Chromium-based browser with microphone access.';
     micBtn.disabled = true;
   }
 
@@ -118,20 +180,46 @@
     chatMessages.scrollTop = chatMessages.scrollHeight;
   }
 
-  async function sendPrompt(text) {
-    appendMessage('user', text);
+  async function sendPrompt(text, options = {}) {
+    const isVoiceTurn = options.voice === true;
+    if (!isVoiceTurn) appendMessage('user', text);
     try {
       const res = await api('/friday/run', {
         method: 'POST',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, channel: isVoiceTurn ? 'voice' : 'text' }),
       });
-      const reply = res.output || res.error || 'Done.';
-      const decisionTag = res.executiveDecision ? ` · ${res.executiveDecision}` : '';
-      const intentTag = res.assistantRequest?.intent ? ` · intent:${res.assistantRequest.intent}` : '';
-      appendMessage('assistant', reply, `${res.executor}${decisionTag}${intentTag} · ${res.durationMs}ms`);
+      const reply = isVoiceTurn
+        ? (res.personalityMeta?.voiceSummary || res.output || res.error || 'I am sorry, Boss. I could not complete that request.')
+        : (res.output || res.error || 'Done.');
+      if (isVoiceTurn) {
+        setVoiceUi('FRIDAY is speaking…', true);
+        speak(reply, {
+          onEnd: () => {
+            voiceTurnProcessing = false;
+            if (voiceConversationActive) {
+              setTimeout(startVoiceListening, 300);
+              setVoiceUi('Your turn. I am listening.', true);
+            }
+          },
+        });
+      } else {
+        const decisionTag = res.executiveDecision ? ` · ${res.executiveDecision}` : '';
+        const intentTag = res.assistantRequest?.intent ? ` · intent:${res.assistantRequest.intent}` : '';
+        appendMessage('assistant', reply, `${res.executor}${decisionTag}${intentTag} · ${res.durationMs}ms`);
+      }
       refreshAll();
     } catch (err) {
-      appendMessage('assistant', `Error: ${err.message}`);
+      if (isVoiceTurn) {
+        setVoiceUi('I had trouble reaching the assistant. Speaking the error…', true);
+        speak(`I am sorry, Boss. ${err.message}`, {
+          onEnd: () => {
+            voiceTurnProcessing = false;
+            if (voiceConversationActive) setTimeout(startVoiceListening, 300);
+          },
+        });
+      } else {
+        appendMessage('assistant', `Error: ${err.message}`);
+      }
     }
   }
 
